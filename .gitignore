@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Project data (DB / thumbnail cache / log)
+/data/index.sqlite
+/data/index.sqlite-journal
+/data/index.sqlite-wal
+/data/index.sqlite-shm
+/data/thumbs/
+/data/server.log
+/data/server.log.*
+
+# Generated shortcut (created locally by tools/create_shortcut.vbs)
+/ComfyDir.lnk
+/ComfyImageOrganizer.lnk
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

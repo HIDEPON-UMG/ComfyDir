@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>ComfyDir</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ComfyDir</div>
+    <button id="helpReopen" class="help-reopen" title="使い方を表示" hidden>？</button>
+
+    <div class="ctl">
+      <label>監視フォルダ:</label>
+      <select id="folderSelect"></select>
+      <button id="btnAddFolder" title="フォルダを追加">+ 追加</button>
+      <button id="btnRescan" title="再スキャン">↻ 再スキャン</button>
+      <button id="btnRemoveFolder" class="danger" title="このフォルダを登録解除">解除</button>
+    </div>
+
+    <div class="ctl">
+      <label>並び順:</label>
+      <select id="orderSelect">
+        <option value="name|asc">名前 ↑</option>
+        <option value="name|desc">名前 ↓</option>
+        <option value="mtime|desc">更新日時 ↓</option>
+        <option value="mtime|asc">更新日時 ↑</option>
+        <option value="added|desc">追加日時 ↓</option>
+      </select>
+    </div>
+
+    <div class="ctl">
+      <label>サイズ:</label>
+      <input id="sizeSlider" type="range" min="80" max="512" value="200" />
+      <input id="sizeNumber" type="number" min="80" max="512" step="1" value="200" />
+      <span class="unit">px</span>
+    </div>
+
+    <div class="ctl">
+      <label>タグフィルタ:</label>
+      <div id="tagFilterChips" class="chips"></div>
+      <input id="tagFilterInput" type="text" list="tagFilterDatalist"
+             placeholder="タグ名 (Enter で追加)" autocomplete="off" size="14" />
+      <datalist id="tagFilterDatalist"></datalist>
+      <button id="tagFilterAdd" title="タグ条件を追加">+</button>
+      <select id="tagFilterMode" title="複数タグの結合方法">
+        <option value="and">AND</option>
+        <option value="or">OR</option>
+      </select>
+    </div>
+
+    <div class="ctl">
+      <label>検索:</label>
+      <input id="promptSearch" type="search"
+             placeholder="プロンプト内検索 (空白区切りでAND)"
+             autocomplete="off" size="28" />
+      <button id="promptSearchClear" title="検索クリア">×</button>
+    </div>
+
+    <div class="ctl status" id="statusBar"></div>
+  </header>
+
+  <div id="helpBanner" class="help-banner">
+    <strong>使い方:</strong>
+    <span class="help-step"><b>1</b> 「+ 追加」で ComfyUI の出力フォルダを登録</span>
+    <span class="help-step"><b>2</b> 画像クリックで右ペインにプロンプト表示（画像を再クリックで全画面）</span>
+    <span class="help-step"><b>3</b> Ctrl / Shift クリックで複数選択 → 「📁 別フォルダへ移動」</span>
+    <span class="help-step"><b>4</b> 上部の「検索」や「タグフィルタ」で絞り込み（タグは自由入力＋既存候補）</span>
+    <span class="help-step"><b>5</b> ペイン中央のグレー帯をドラッグで右ペイン幅を変更</span>
+    <button id="helpClose" class="help-close" title="このバーを閉じる">×</button>
+  </div>
+
+  <main class="main" id="mainSplit">
+    <section class="grid-pane">
+      <div class="grid-toolbar">
+        <span id="gridSummary"></span>
+        <button id="btnMove" class="btn-move" title="選択した画像を別フォルダに移動" disabled>📁 別フォルダへ移動</button>
+        <span class="spacer"></span>
+        <span class="hint">クリック: 単一選択 / Ctrl+クリック: 追加 / Shift+クリック: 範囲</span>
+      </div>
+      <div id="grid" class="grid"></div>
+    </section>
+
+    <div id="splitter" class="splitter" title="ドラッグで幅変更"></div>
+
+    <aside id="rightPane" class="right-pane">
+      <div class="empty">画像を選択してください</div>
+    </aside>
+  </main>
+
+  <!-- フォルダ追加ダイアログ -->
+  <dialog id="addFolderDialog">
+    <form method="dialog">
+      <h3>フォルダを追加</h3>
+      <p>ComfyUI の出力フォルダなどの絶対パスを入力してください。</p>
+      <input id="folderPathInput" type="text" placeholder="C:\\path\\to\\ComfyUI\\output" autocomplete="off" />
+      <input id="folderLabelInput" type="text" placeholder="表示ラベル (省略可)" autocomplete="off" />
+      <menu>
+        <button value="cancel">キャンセル</button>
+        <button id="btnAddFolderSubmit" value="default">追加</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- 移動ダイアログ -->
+  <dialog id="moveDialog">
+    <form method="dialog">
+      <h3>選択画像を移動</h3>
+      <p id="moveDialogSummary"></p>
+
+      <fieldset class="move-section">
+        <legend><input type="radio" name="moveMode" value="folder" id="moveModeFolder" checked /> 登録済みフォルダへ移動</legend>
+        <select id="moveFolderSelect" disabled></select>
+        <label class="sub">
+          <input type="text" id="moveSubdir" placeholder="(省略可) サブフォルダ名" autocomplete="off" />
+          <span class="hint">入力するとそのフォルダ配下に格納（無ければ自動作成）</span>
+        </label>
+      </fieldset>
+
+      <fieldset class="move-section">
+        <legend><input type="radio" name="moveMode" value="path" id="moveModePath" /> 任意のパスへ移動</legend>
+        <input type="text" id="moveCustomPath" placeholder="C:\\path\\to\\dest" autocomplete="off" />
+        <label class="sub">
+          <input type="checkbox" id="moveCreateDir" /> フォルダが無ければ作成する
+        </label>
+      </fieldset>
+
+      <menu>
+        <button value="cancel">キャンセル</button>
+        <button id="btnMoveSubmit" value="default">移動</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- ライトボックス (右ペインの画像クリックで全画面表示) -->
+  <dialog id="lightbox" class="lightbox">
+    <img id="lightboxImg" alt="" />
+    <div class="lightbox-caption" id="lightboxCaption"></div>
+    <button class="lightbox-close" id="lightboxClose" title="閉じる (Esc)">×</button>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
