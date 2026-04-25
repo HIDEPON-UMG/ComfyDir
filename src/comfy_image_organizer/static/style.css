@@ -28,9 +28,15 @@ body {
   flex-direction: column;
 }
 
-button, select, input[type=text], input[type=range] {
+button, select, input[type=text], input[type=number], input[type=search], input[type=range], textarea {
   font: inherit;
   color: inherit;
+}
+/* 数値入力のスピナーも同テーマで見えるように */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  filter: invert(0.8);
+  opacity: 0.85;
 }
 
 button {
@@ -40,10 +46,51 @@ button {
   border-radius: 4px;
   padding: 4px 10px;
   cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 button:hover { background: #3a3e48; }
-button.danger { background: #4a2a2a; border-color: #6b3434; }
-button.danger:hover { background: #5b3535; }
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* プライマリ: 追加/改名/コピー/移動/タグ+ など「実行系」のボタン */
+button.btn-primary {
+  background: linear-gradient(180deg, #4d7bd6, #3964b8);
+  border-color: #3964b8;
+  color: #fff;
+  font-weight: 600;
+}
+button.btn-primary:hover {
+  background: linear-gradient(180deg, #5a8af0, #4574c8);
+  box-shadow: 0 0 0 1px rgba(122, 167, 255, 0.35);
+}
+button.btn-primary:disabled {
+  background: #36404f;
+  border-color: var(--border);
+  color: var(--fg-dim);
+  font-weight: normal;
+}
+
+/* 危険操作: 解除/削除など破壊的なボタン */
+button.danger {
+  background: linear-gradient(180deg, #c25151, #9a3939);
+  border-color: #8b3333;
+  color: #fff;
+  font-weight: 600;
+}
+button.danger:hover {
+  background: linear-gradient(180deg, #d96666, #b04444);
+  box-shadow: 0 0 0 1px rgba(217, 112, 112, 0.4);
+}
+
+/* サブ: コピーなどコンパクトなアクション */
+button.btn-sub {
+  background: #2f4566;
+  border-color: #3d5a85;
+  color: #d3e2ff;
+}
+button.btn-sub:hover { background: #385077; }
 
 select, input[type=text] {
   background: var(--bg-2);
@@ -305,6 +352,32 @@ body.dragging-split, body.dragging-split * {
 .right-pane pre.prompt-negative {
   /* ネガティブはデフォルトを半分にして場所を節約 (グリップで伸縮可) */
   height: 130px;
+}
+
+/* メモ欄 (タグ直下) */
+.memo-block { margin-top: 10px; }
+.memo-block textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;            /* 縦方向だけ伸縮 */
+  min-height: 3em;             /* 約 2 行 */
+}
+.memo-block textarea:focus {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px rgba(122, 167, 255, 0.4);
+}
+.memo-status {
+  font-size: 10px;
+  color: var(--fg-dim);
+  margin-left: 6px;
+  font-weight: normal;
 }
 .right-pane .copy-btn {
   font-size: 10px;

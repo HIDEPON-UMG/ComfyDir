@@ -295,7 +295,7 @@
     const stem = ext ? d.filename.slice(0, -ext.length) : d.filename;
     const nameRow = document.createElement("div");
     nameRow.className = "row";
-    nameRow.innerHTML = `<input type="text" id="renameInput" value="${escapeAttr(stem)}" /><span>${escapeHtml(ext)}</span><button id="btnRename">改名</button>`;
+    nameRow.innerHTML = `<input type="text" id="renameInput" value="${escapeAttr(stem)}" /><span>${escapeHtml(ext)}</span><button id="btnRename" class="btn-primary">改名</button>`;
     pane.appendChild(nameRow);
     $("#btnRename").onclick = async () => {
       const v = $("#renameInput").value.trim();
@@ -327,7 +327,7 @@
 
     const tagAddRow = document.createElement("div");
     tagAddRow.className = "row";
-    tagAddRow.innerHTML = `<input type="text" id="tagAddInput" placeholder="タグを追加 (Enter)" list="tagDatalist" /><button id="btnTagAdd">+</button>`;
+    tagAddRow.innerHTML = `<input type="text" id="tagAddInput" placeholder="タグを追加 (Enter)" list="tagDatalist" /><button id="btnTagAdd" class="btn-primary">+</button>`;
     tagWrap.appendChild(tagAddRow);
     pane.appendChild(tagWrap);
 
@@ -351,6 +351,47 @@
         await reloadTags();
       };
     });
+
+    // メモ欄 (タグ直下、2行ぶん。デバウンス + blur で自動保存)
+    const memoWrap = document.createElement("div");
+    memoWrap.className = "memo-block";
+    memoWrap.innerHTML = `
+      <h3>メモ <span class="memo-status" id="memoStatus"></span></h3>
+      <textarea id="memoInput" rows="2" placeholder="この画像についてのメモ (自動保存)"></textarea>
+    `;
+    pane.appendChild(memoWrap);
+    const memoInput = memoWrap.querySelector("#memoInput");
+    const memoStatus = memoWrap.querySelector("#memoStatus");
+    memoInput.value = d.memo || "";
+
+    let memoSavedValue = memoInput.value;
+    let memoTimer = null;
+    const saveMemo = async () => {
+      const v = memoInput.value;
+      if (v === memoSavedValue) return;
+      try {
+        memoStatus.textContent = "保存中...";
+        await api(`/api/images/${d.id}/memo`, {
+          method: "POST",
+          body: JSON.stringify({ memo: v }),
+        });
+        memoSavedValue = v;
+        memoStatus.textContent = "保存済";
+        setTimeout(() => { memoStatus.textContent = ""; }, 1500);
+      } catch (e) {
+        memoStatus.textContent = "保存失敗: " + e.message;
+      }
+    };
+    memoInput.addEventListener("input", () => {
+      memoStatus.textContent = "編集中...";
+      clearTimeout(memoTimer);
+      memoTimer = setTimeout(saveMemo, 600);
+    });
+    memoInput.addEventListener("blur", () => {
+      clearTimeout(memoTimer);
+      saveMemo();
+    });
+
     const submitTag = async () => {
       const v = $("#tagAddInput").value.trim();
       if (!v) return;
@@ -386,7 +427,7 @@
 
     if (text) {
       const btn = document.createElement("button");
-      btn.className = "copy-btn";
+      btn.className = "copy-btn btn-sub";
       btn.textContent = "コピー";
       btn.onclick = async () => {
         await navigator.clipboard.writeText(text);
@@ -402,11 +443,11 @@
       <h3>${state.selected.size} 枚 選択中</h3>
       <div class="row">
         <input type="text" id="bulkAddInput" placeholder="追加するタグ (カンマ区切り可)" list="tagDatalist" />
-        <button id="bulkAdd">+ 付与</button>
+        <button id="bulkAdd" class="btn-primary">+ 付与</button>
       </div>
       <div class="row">
         <input type="text" id="bulkRemoveInput" placeholder="外すタグ" list="tagDatalist" />
-        <button id="bulkRemove">- 解除</button>
+        <button id="bulkRemove" class="danger">- 解除</button>
       </div>
       <h3>既存タグ</h3>
       <div id="bulkTagList" class="chips"></div>

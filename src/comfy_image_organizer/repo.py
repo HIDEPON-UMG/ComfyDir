@@ -250,6 +250,18 @@ def update_image_location(
     )
 
 
+def update_image_memo(
+    conn: sqlite3.Connection, image_id: int, memo: str | None
+) -> None:
+    """画像のユーザーメモを更新する。空文字は NULL として保存。"""
+    val = memo.strip() if memo else None
+    if val == "":
+        val = None
+    conn.execute(
+        "UPDATE images SET memo = ? WHERE id = ?", (val, image_id)
+    )
+
+
 # ---------- tags ----------
 
 def list_tags_with_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS images (
   positive_prompt TEXT,
   negative_prompt TEXT,
   raw_prompt_json TEXT,
+  memo            TEXT,
   sort_order      INTEGER DEFAULT 0,
   added_at        REAL    NOT NULL,
   scanned_at      REAL    NOT NULL,
@@ -62,8 +63,33 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """スキーマを冪等に作成する。"""
+    """スキーマを冪等に作成する。
+
+    既存 DB に対しては不足カラムを ALTER TABLE で追加する軽量マイグレーション。
+    """
     conn.executescript(SCHEMA_SQL)
+    _migrate_missing_columns(conn)
+
+
+def _migrate_missing_columns(conn: sqlite3.Connection) -> None:
+    """既存テーブルに不足している列を追加する。
+
+    SQLite は ALTER TABLE で列追加は素直に通るので、PRAGMA table_info で
+    現状を取得し、定義に無いものだけ追加する。
+    """
+    expected: dict[str, list[tuple[str, str]]] = {
+        # table -> [(column, "<type> [DEFAULT ...]")]
+        "images": [
+            ("memo", "TEXT"),
+        ],
+    }
+    for table, cols in expected.items():
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        for name, decl in cols:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def get_conn() -> Iterator[sqlite3.Connection]:

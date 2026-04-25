@@ -13,7 +13,7 @@
     <div class="ctl">
       <label>監視フォルダ:</label>
       <select id="folderSelect"></select>
-      <button id="btnAddFolder" title="フォルダを追加">+ 追加</button>
+      <button id="btnAddFolder" class="btn-primary" title="フォルダを追加">+ 追加</button>
       <button id="btnRescan" title="再スキャン">↻ 再スキャン</button>
       <button id="btnRemoveFolder" class="danger" title="このフォルダを登録解除">解除</button>
     </div>
@@ -42,7 +42,7 @@
       <input id="tagFilterInput" type="text" list="tagFilterDatalist"
              placeholder="タグ名 (Enter で追加)" autocomplete="off" size="14" />
       <datalist id="tagFilterDatalist"></datalist>
-      <button id="tagFilterAdd" title="タグ条件を追加">+</button>
+      <button id="tagFilterAdd" class="btn-primary" title="タグ条件を追加">+</button>
       <select id="tagFilterMode" title="複数タグの結合方法">
         <option value="and">AND</option>
         <option value="or">OR</option>
@@ -74,7 +74,7 @@
     <section class="grid-pane">
       <div class="grid-toolbar">
         <span id="gridSummary"></span>
-        <button id="btnMove" class="btn-move" title="選択した画像を別フォルダに移動" disabled>📁 別フォルダへ移動</button>
+        <button id="btnMove" class="btn-move btn-primary" title="選択した画像を別フォルダに移動" disabled>📁 別フォルダへ移動</button>
         <span class="spacer"></span>
         <span class="hint">クリック: 単一選択 / Ctrl+クリック: 追加 / Shift+クリック: 範囲</span>
       </div>
@@ -97,7 +97,7 @@
       <input id="folderLabelInput" type="text" placeholder="表示ラベル (省略可)" autocomplete="off" />
       <menu>
         <button value="cancel">キャンセル</button>
-        <button id="btnAddFolderSubmit" value="default">追加</button>
+        <button id="btnAddFolderSubmit" class="btn-primary" value="default">追加</button>
       </menu>
     </form>
   </dialog>
@@ -127,7 +127,7 @@
 
       <menu>
         <button value="cancel">キャンセル</button>
-        <button id="btnMoveSubmit" value="default">移動</button>
+        <button id="btnMoveSubmit" class="btn-primary" value="default">移動</button>
       </menu>
     </form>
   </dialog>

@@ -129,10 +129,19 @@ def _extract_pos_neg(graph: dict[str, Any]) -> tuple[str | None, str | None]:
         if not isinstance(node, dict):
             continue
         if node.get("class_type") in CLIP_ENCODE_TYPES:
-            text = _node_clip_text(node)
+            text = _node_clip_text(graph, node)
             if text:
                 fallback.append(text)
     return (_join_unique(fallback) or None, None)
+
+
+def _get_node(graph: dict[str, Any], node_id: Any) -> dict[str, Any] | None:
+    """グラフ辞書からノードを取得 (キーは str / int 両方を許容)。"""
+    nid = str(node_id)
+    n = graph.get(nid)
+    if n is None and nid.isdigit():
+        n = graph.get(int(nid))
+    return n if isinstance(n, dict) else None
 
 
 def _resolve_text(graph: dict[str, Any], ref: Any, depth: int = 0) -> str | None:
@@ -145,14 +154,13 @@ def _resolve_text(graph: dict[str, Any], ref: Any, depth: int = 0) -> str | None
     if not (isinstance(ref, list) and len(ref) >= 1):
         return None
 
-    node_id = str(ref[0])
-    node = graph.get(node_id) or graph.get(int(node_id) if str(node_id).isdigit() else node_id)
-    if not isinstance(node, dict):
+    node = _get_node(graph, ref[0])
+    if node is None:
         return None
 
     class_type = node.get("class_type")
     if class_type in CLIP_ENCODE_TYPES:
-        return _node_clip_text(node)
+        return _node_clip_text(graph, node, depth)
 
     # 中継ノードの場合: inputs を全部見て、conditioning らしきリスト参照を追う
     inputs = node.get("inputs", {}) or {}
@@ -170,18 +178,115 @@ def _resolve_text(graph: dict[str, Any], ref: Any, depth: int = 0) -> str | None
     return _join_unique(collected) or None
 
 
-def _node_clip_text(node: dict[str, Any]) -> str | None:
+def _node_clip_text(
+    graph: dict[str, Any], node: dict[str, Any], depth: int = 0
+) -> str | None:
     """CLIPTextEncode 系ノードからテキストを取り出す。
 
-    通常は inputs.text。SDXL 系は text_g / text_l がある。
+    inputs.text は通常文字列だが、Text Concatenate などのノードからの
+    参照 ([node_id, slot]) で繋がっているケースもある。その場合は上流の
+    文字列ノードを再帰的に辿って組み立てる。SDXL 系は text_g / text_l。
     """
     inputs = node.get("inputs", {}) or {}
     parts: list[str] = []
     for key in ("text", "text_g", "text_l"):
         v = inputs.get(key)
-        if isinstance(v, str) and v.strip():
-            parts.append(v.strip())
+        if v is None:
+            continue
+        if isinstance(v, str):
+            if v.strip():
+                parts.append(v.strip())
+        elif isinstance(v, list) and len(v) >= 1 and isinstance(v[0], (str, int)):
+            sub = _resolve_string_value(graph, v, depth + 1)
+            if sub:
+                parts.append(sub)
     return _join_unique(parts) or None
+
+
+# Text Concatenate などで使われる「文字列入力」と推定されるキー名
+_NON_TEXT_INPUT_KEYS = {
+    "clip", "model", "vae", "image", "mask", "latent", "conditioning",
+    "control_net", "controlnet", "guider", "sampler", "sigmas", "noise",
+    "seed", "steps", "cfg", "denoise", "scheduler", "sampler_name",
+    "width", "height", "batch_size", "strength", "weight",
+    "start_at_step", "end_at_step", "noise_seed", "filename_prefix",
+}
+
+
+# 連結区切りに使われる特殊キー (内容ではなく区切り文字として解釈)
+_DELIMITER_KEYS = {"delimiter", "separator"}
+# 連結対象から除外したい設定系キー
+_TEXT_INPUT_EXCLUDE = {
+    "clean_whitespace", "linebreak", "trim", "strip",
+    "insert_lora", "lora",
+}
+
+
+def _is_text_input_key(key: str) -> bool:
+    """ノードの inputs キーが文字列入力 (連結対象) と推定できるか。"""
+    if not key:
+        return False
+    kl = key.lower()
+    if kl in _NON_TEXT_INPUT_KEYS or kl in _DELIMITER_KEYS or kl in _TEXT_INPUT_EXCLUDE:
+        return False
+    if "text" in kl or "string" in kl or "prompt" in kl:
+        return True
+    if kl in ("value", "prepend", "append"):
+        return True
+    return False
+
+
+def _resolve_string_value(
+    graph: dict[str, Any], ref: Any, depth: int = 0
+) -> str | None:
+    """汎用版: ノード参照から最終的な「文字列値」を組み立てる。
+
+    Text Concatenate / Show Text / Power Prompt / Primitive(STRING) などの
+    **文字列出力ノード** を辿り、inputs の text*/string*/prompt* フィールドを
+    順序通り連結する。`delimiter` / `separator` キーがあれば連結文字として使用。
+    CLIPTextEncode に当たれば _node_clip_text で取り出す (通常は来ないが安全のため)。
+    """
+    if depth > 16 or ref is None:
+        return None
+    if not (isinstance(ref, list) and len(ref) >= 1):
+        return None
+
+    node = _get_node(graph, ref[0])
+    if node is None:
+        return None
+
+    class_type = node.get("class_type")
+    if class_type in CLIP_ENCODE_TYPES:
+        return _node_clip_text(graph, node, depth + 1)
+
+    inputs = node.get("inputs", {}) or {}
+
+    # delimiter (Text Concatenate の連結区切り) を先に拾う
+    delimiter = " "
+    for k, v in inputs.items():
+        if k.lower() in _DELIMITER_KEYS and isinstance(v, str):
+            delimiter = v
+            break
+
+    # text 系の入力を順序通り収集 (空文字は除外)
+    parts: list[str] = []
+    for k, v in inputs.items():
+        if not _is_text_input_key(k):
+            continue
+        val: str | None = None
+        if isinstance(v, str):
+            if v.strip():
+                val = v.strip()
+        elif isinstance(v, list) and len(v) >= 1 and isinstance(v[0], (str, int)):
+            sub = _resolve_string_value(graph, v, depth + 1)
+            if sub and sub.strip():
+                val = sub.strip()
+        if val:
+            parts.append(val)
+
+    if not parts:
+        return None
+    return delimiter.join(parts).strip() or None
 
 
 def _join_unique(items: list[str]) -> str:

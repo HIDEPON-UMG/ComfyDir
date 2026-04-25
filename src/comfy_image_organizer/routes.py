@@ -39,6 +39,10 @@ class RenameRequest(BaseModel):
     filename: str  # 拡張子は元と同一を強制
 
 
+class MemoRequest(BaseModel):
+    memo: str = ""  # 空文字は NULL として保存される
+
+
 class MoveRequest(BaseModel):
     image_ids: list[int] = Field(default_factory=list)
     # 登録フォルダ指定モード
@@ -175,6 +179,8 @@ def get_image_detail(image_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
     if r is None:
         raise HTTPException(status_code=404, detail="画像が見つかりません")
     tags = repo.list_tags_for_image(conn, image_id)
+    # memo 列はマイグレーション直後など、Row に含まれないケースに備えて安全に取得
+    memo = r["memo"] if "memo" in r.keys() else None
     return {
         "id": r["id"],
         "folder_id": r["folder_id"],
@@ -188,6 +194,7 @@ def get_image_detail(image_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
         "positive_prompt": r["positive_prompt"],
         "negative_prompt": r["negative_prompt"],
         "added_at": r["added_at"],
+        "memo": memo or "",
         "tags": tags,
     }
 
@@ -250,6 +257,17 @@ def rename_image(
     src.rename(dst)
     repo.update_image_path(conn, image_id, str(dst))
     return {"id": image_id, "filename": dst.name, "path": str(dst)}
+
+
+@router.post("/api/images/{image_id}/memo")
+def update_memo(
+    image_id: int, body: MemoRequest, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    """画像のユーザーメモを保存する。空文字を渡すとクリア。"""
+    if repo.get_image(conn, image_id) is None:
+        raise HTTPException(status_code=404, detail="画像が見つかりません")
+    repo.update_image_memo(conn, image_id, body.memo)
+    return {"id": image_id, "memo": (body.memo or "").strip()}
 
 
 @router.post("/api/images/move")
