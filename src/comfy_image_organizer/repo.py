@@ -172,6 +172,7 @@ def search_images(
     order: str,              # 'name' | 'mtime' | 'added'
     direction: str,          # 'asc' | 'desc'
     prompt_query: str | None = None,  # ポジ/ネガに対する部分一致 (大小区別なし)
+    memo_query: str | None = None,    # メモ本文に対する部分一致 (大小区別なし)
 ) -> list[sqlite3.Row]:
     where: list[str] = []
     params: list[Any] = []
@@ -209,6 +210,13 @@ def search_images(
             like = f"%{term.lower()}%"
             params.append(like)
             params.append(like)
+
+    if memo_query:
+        # メモ本文の部分一致 (空白区切りで AND、大小区別なし)
+        terms = [t for t in memo_query.split() if t]
+        for term in terms:
+            where.append("LOWER(COALESCE(i.memo, '')) LIKE ?")
+            params.append(f"%{term.lower()}%")
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 

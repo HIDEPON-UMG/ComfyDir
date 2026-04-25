@@ -138,6 +138,7 @@ def list_images(
     order: str = Query(default="name", pattern="^(name|mtime|added)$"),
     direction: str = Query(default="asc", pattern="^(?i)(asc|desc)$"),
     q: str = Query(default=""),
+    qm: str = Query(default=""),
     conn=Depends(get_conn),
 ) -> list[dict[str, Any]]:
     tag_names = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
@@ -157,6 +158,7 @@ def list_images(
         order=order,
         direction=direction,
         prompt_query=q.strip() or None,
+        memo_query=qm.strip() or None,
     )
     return [
         {

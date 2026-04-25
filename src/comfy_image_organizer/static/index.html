@@ -14,7 +14,7 @@
       <label>監視フォルダ:</label>
       <select id="folderSelect"></select>
       <button id="btnAddFolder" class="btn-primary" title="フォルダを追加">+ 追加</button>
-      <button id="btnRescan" title="再スキャン">↻ 再スキャン</button>
+      <button id="btnRescan" class="btn-sub" title="再スキャン">↻ 再スキャン</button>
       <button id="btnRemoveFolder" class="danger" title="このフォルダを登録解除">解除</button>
     </div>
 
@@ -53,8 +53,12 @@
       <label>検索:</label>
       <input id="promptSearch" type="search"
              placeholder="プロンプト内検索 (空白区切りでAND)"
-             autocomplete="off" size="28" />
-      <button id="promptSearchClear" title="検索クリア">×</button>
+             autocomplete="off" size="24" />
+      <button id="promptSearchClear" class="btn-close" title="プロンプト検索クリア">×</button>
+      <input id="memoSearch" type="search"
+             placeholder="メモ内検索"
+             autocomplete="off" size="16" />
+      <button id="memoSearchClear" class="btn-close" title="メモ検索クリア">×</button>
     </div>
 
     <div class="ctl status" id="statusBar"></div>
@@ -96,7 +100,7 @@
       <input id="folderPathInput" type="text" placeholder="C:\\path\\to\\ComfyUI\\output" autocomplete="off" />
       <input id="folderLabelInput" type="text" placeholder="表示ラベル (省略可)" autocomplete="off" />
       <menu>
-        <button value="cancel">キャンセル</button>
+        <button class="btn-ghost" value="cancel">キャンセル</button>
         <button id="btnAddFolderSubmit" class="btn-primary" value="default">追加</button>
       </menu>
     </form>
@@ -126,7 +130,7 @@
       </fieldset>
 
       <menu>
-        <button value="cancel">キャンセル</button>
+        <button class="btn-ghost" value="cancel">キャンセル</button>
         <button id="btnMoveSubmit" class="btn-primary" value="default">移動</button>
       </menu>
     </form>

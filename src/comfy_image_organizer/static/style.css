@@ -84,13 +84,38 @@ button.danger:hover {
   box-shadow: 0 0 0 1px rgba(217, 112, 112, 0.4);
 }
 
-/* サブ: コピーなどコンパクトなアクション */
+/* サブ: コピー・再スキャンなど補助的だが頻度の高いアクション */
 button.btn-sub {
   background: #2f4566;
   border-color: #3d5a85;
   color: #d3e2ff;
 }
 button.btn-sub:hover { background: #385077; }
+
+/* クローズ / クリア: × 系。淡い赤系で「閉じる/消す」を示唆 */
+button.btn-close {
+  background: #3d2a2a;
+  border-color: #6b3a3a;
+  color: #f0c4c4;
+  font-weight: 600;
+}
+button.btn-close:hover {
+  background: #4d3434;
+  color: #fff;
+  border-color: #d97070;
+}
+
+/* ゴースト: ダイアログのキャンセルなど中立的な離脱アクション */
+button.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+button.btn-ghost:hover {
+  background: #2f3340;
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
 
 select, input[type=text] {
   background: var(--bg-2);
@@ -176,19 +201,24 @@ input[type=search]::-webkit-search-cancel-button {
 }
 .help-close {
   margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
+  background: #3d2a2a;
+  border: 1px solid #6b3a3a;
+  color: #f0c4c4;
   width: 24px; height: 24px;
   padding: 0;
   font-size: 14px;
   line-height: 1;
+  font-weight: 600;
 }
-.help-close:hover { color: var(--fg); border-color: var(--fg-dim); }
+.help-close:hover {
+  background: #4d3434;
+  color: #fff;
+  border-color: #d97070;
+}
 .help-reopen {
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
+  background: #2f4566;
+  border: 1px solid #3d5a85;
+  color: #d3e2ff;
   width: 28px; height: 28px;
   padding: 0;
   font-size: 14px;
@@ -198,7 +228,11 @@ input[type=search]::-webkit-search-cancel-button {
   cursor: help;
   margin-right: 8px;
 }
-.help-reopen:hover { color: var(--fg); border-color: var(--accent); }
+.help-reopen:hover {
+  background: #385077;
+  color: #fff;
+  border-color: var(--accent);
+}
 .help-banner.hidden { display: none; }
 
 /* ---------------- main ---------------- */
@@ -312,6 +346,65 @@ body.dragging-split, body.dragging-split * {
 .right-pane .empty { color: var(--fg-dim); text-align: center; margin-top: 40px; }
 
 .right-pane h3 { margin: 4px 0 6px; font-size: 13px; color: var(--accent); }
+.pane-section-header h3 { margin: 0; }
+
+/* ----- ペインのセクション (DnD で並び替え可) ----- */
+.pane-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pane-section {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px 8px;
+  position: relative;
+  transition: background 0.12s, border-color 0.12s;
+}
+.pane-section:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.pane-section.dragging {
+  opacity: 0.45;
+  border-color: var(--accent-2);
+  background: rgba(122, 167, 255, 0.06);
+}
+.pane-section.drop-before {
+  box-shadow: 0 -2px 0 0 var(--accent) inset;
+  border-top-color: var(--accent);
+}
+.pane-section.drop-after {
+  box-shadow: 0 2px 0 0 var(--accent) inset;
+  border-bottom-color: var(--accent);
+}
+.pane-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  min-height: 18px;
+}
+.drag-handle {
+  display: inline-block;
+  color: var(--fg-dim);
+  cursor: grab;
+  user-select: none;
+  font-size: 14px;
+  letter-spacing: -2px;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: 3px;
+}
+.drag-handle:hover {
+  color: var(--accent);
+  background: rgba(122, 167, 255, 0.10);
+}
+.drag-handle:active { cursor: grabbing; }
+.section-extra { margin-left: auto; }
+.pane-section-body {
+  /* body 側の余白は中身の各要素が持つので追加しない */
+}
 .right-pane .preview-wrap {
   background: #111;
   border-radius: 4px;
@@ -463,17 +556,20 @@ dialog.lightbox .lightbox-caption {
 dialog.lightbox .lightbox-close {
   position: fixed;
   top: 8px; right: 12px;
-  background: rgba(0, 0, 0, 0.55);
-  color: var(--fg);
-  border: 1px solid var(--border);
+  background: #3d2a2a;
+  color: #f0c4c4;
+  border: 1px solid #6b3a3a;
   border-radius: 50%;
   width: 36px; height: 36px;
   font-size: 22px;
   line-height: 1;
+  font-weight: 600;
   cursor: pointer;
 }
 dialog.lightbox .lightbox-close:hover {
-  background: var(--accent-2);
+  background: #d97070;
+  color: #fff;
+  border-color: #fff;
 }
 .preview-wrap img {
   cursor: zoom-in;
