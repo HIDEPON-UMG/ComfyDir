@@ -19,17 +19,6 @@
     </div>
 
     <div class="ctl">
-      <label>並び順:</label>
-      <select id="orderSelect">
-        <option value="name|asc">名前 ↑</option>
-        <option value="name|desc">名前 ↓</option>
-        <option value="mtime|desc">更新日時 ↓</option>
-        <option value="mtime|asc">更新日時 ↑</option>
-        <option value="added|desc">追加日時 ↓</option>
-      </select>
-    </div>
-
-    <div class="ctl">
       <label>サイズ:</label>
       <input id="sizeSlider" type="range" min="80" max="512" value="200" />
       <input id="sizeNumber" type="number" min="80" max="512" step="1" value="200" />
@@ -37,13 +26,13 @@
     </div>
 
     <div class="ctl">
-      <label>タグフィルタ:</label>
+      <label>Myタグフィルタ:</label>
       <div id="tagFilterChips" class="chips"></div>
       <input id="tagFilterInput" type="text" list="tagFilterDatalist"
-             placeholder="タグ名 (Enter で追加)" autocomplete="off" size="14" />
+             placeholder="Myタグ名 (Enter で追加)" autocomplete="off" size="14" />
       <datalist id="tagFilterDatalist"></datalist>
-      <button id="tagFilterAdd" class="btn-primary" title="タグ条件を追加">+</button>
-      <select id="tagFilterMode" title="複数タグの結合方法">
+      <button id="tagFilterAdd" class="btn-primary" title="Myタグ条件を追加">+</button>
+      <select id="tagFilterMode" title="複数Myタグの結合方法">
         <option value="and">AND</option>
         <option value="or">OR</option>
       </select>
@@ -72,7 +61,7 @@
     <span class="help-step"><b>1</b> 「+ 追加」で ComfyUI の出力フォルダを登録</span>
     <span class="help-step"><b>2</b> 画像クリックで右ペインにプロンプト表示（画像を再クリックで全画面）</span>
     <span class="help-step"><b>3</b> Ctrl / Shift クリックで複数選択 → 「📁 別フォルダへ移動」</span>
-    <span class="help-step"><b>4</b> 上部の「検索」や「タグフィルタ」で絞り込み（タグは自由入力＋既存候補）</span>
+    <span class="help-step"><b>4</b> 上部の「検索」や「Myタグフィルタ」で絞り込み（Myタグは自由入力＋既存候補）</span>
     <span class="help-step"><b>5</b> ペイン中央のグレー帯をドラッグで右ペイン幅を変更</span>
     <button id="helpClose" class="help-close" title="このバーを閉じる">×</button>
   </div>
@@ -82,6 +71,16 @@
       <div class="grid-toolbar">
         <span id="gridSummary"></span>
         <button id="btnMove" class="btn-move btn-primary" title="選択した画像を別フォルダに移動" disabled>📁 別フォルダへ移動</button>
+        <div class="ctl ctl-order" title="グリッドの並び順を変更">
+          <label for="orderSelect">並び順:</label>
+          <select id="orderSelect">
+            <option value="name|asc">名前 ↑</option>
+            <option value="name|desc">名前 ↓</option>
+            <option value="mtime|desc">更新日時 ↓</option>
+            <option value="mtime|asc">更新日時 ↑</option>
+            <option value="added|desc">追加日時 ↓</option>
+          </select>
+        </div>
         <span class="spacer"></span>
         <span class="hint">クリック: 単一選択 / Ctrl+クリック: 追加 / Shift+クリック: 範囲</span>
       </div>

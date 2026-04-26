@@ -57,10 +57,16 @@
     paneOrder: sanitizePaneOrder(prefs.paneOrder),
   };
 
-  // 右ペインのデフォルト並び順 (ユーザー要望: プロンプト最上部、画像とファイル名は同一セクション)
+  // 右ペインのデフォルト並び順 (ファイル名/メタ → Myタグ → メモ → Positive → Negative)
   function sanitizePaneOrder(arr) {
     const known = new Set(["preview", "tags", "memo", "positive", "negative"]);
-    const defaults = ["positive", "tags", "memo", "preview", "negative"];
+    const defaults = ["preview", "tags", "memo", "positive", "negative"];
+    // プレビュー画像廃止に伴う旧デフォルト順 (= 未カスタマイズの保存値) は新デフォルトにリセット
+    const legacyDefault = ["positive", "tags", "memo", "preview", "negative"];
+    const isLegacyDefault =
+      Array.isArray(arr) && arr.length === legacyDefault.length &&
+      arr.every((v, i) => v === legacyDefault[i]);
+    if (isLegacyDefault) return [...defaults];
     // 既知 ID だけ残す (旧バージョンの "filename" 等は自動除去)
     const order = Array.isArray(arr) ? arr.filter(s => known.has(s)) : [];
     for (const id of defaults) {
@@ -153,7 +159,7 @@
   async function removeCurrentFolder() {
     if (state.currentFolderId == null) return;
     const f = state.folders.find(x => x.id === state.currentFolderId);
-    if (!confirm(`登録解除しますか?\n${f?.path}\n\n(画像のタグ情報も DB から消えますが、ファイル自体は削除されません)`)) return;
+    if (!confirm(`登録解除しますか?\n${f?.path}\n\n(画像のMyタグ情報も DB から消えますが、ファイル自体は削除されません)`)) return;
     await api(`/api/folders/${state.currentFolderId}`, { method: "DELETE" });
     state.currentFolderId = null;
     await reloadFolders();
@@ -249,6 +255,18 @@
       else state.selected.add(id);
       state.lastClickedId = id;
     } else {
+      // 同じセルを連続でクリックされたら拡大表示 (二回連続押し = ライトボックス)
+      const isSameAsSelected =
+        state.selected.size === 1 && state.selected.has(id) && state.lastClickedId === id;
+      if (isSameAsSelected) {
+        const det = state.detail && state.detail.id === id ? state.detail : null;
+        const src = det
+          ? `/api/images/${det.id}/preview?v=${det.sha1.slice(0, 8)}`
+          : `/api/images/${id}/preview`;
+        const caption = det ? `${det.filename}  (${det.width}×${det.height})` : "";
+        openLightbox(src, caption);
+        return;
+      }
       state.selected.clear();
       state.selected.add(id);
       state.lastClickedId = id;
@@ -296,11 +314,12 @@
   // 戻り値の DOM が <div class="pane-section"> の中身になる。
   // タイトルは sectionMeta から取得。
   const sectionRenderers = {
-    // ファイル名(改名フォーム) → 画像 → メタ の順で 1 セクションに統合
+    // ファイル名(改名フォーム) + メタ情報。プレビュー画像はグリッドのサムネイルと
+    // 重複するため右ペインからは廃止 (拡大はサムネ二回連続クリックでライトボックス)
     preview: (d) => {
       const frag = document.createDocumentFragment();
 
-      // 1) ファイル名 + 改名フォーム (最上部)
+      // 1) ファイル名 + 改名フォーム
       const ext = d.filename.includes(".") ? d.filename.slice(d.filename.lastIndexOf(".")) : "";
       const stem = ext ? d.filename.slice(0, -ext.length) : d.filename;
       const row = document.createElement("div");
@@ -325,19 +344,7 @@
       };
       frag.appendChild(row);
 
-      // 2) プレビュー画像
-      const wrap = document.createElement("div");
-      wrap.className = "preview-wrap";
-      const img = document.createElement("img");
-      img.src = `/api/images/${d.id}/preview?v=${d.sha1.slice(0, 8)}`;
-      img.title = "クリックで大画面表示";
-      img.addEventListener("click", () => {
-        openLightbox(img.src, `${d.filename}  (${d.width}×${d.height})`);
-      });
-      wrap.appendChild(img);
-      frag.appendChild(wrap);
-
-      // 3) メタ情報
+      // 2) メタ情報 (解像度 / サイズ / 更新日時)
       const meta = document.createElement("div");
       meta.className = "meta";
       const date = new Date(d.mtime * 1000).toLocaleString();
@@ -361,7 +368,7 @@
 
       const row = document.createElement("div");
       row.className = "row";
-      row.innerHTML = `<input type="text" class="tag-add-input" placeholder="タグを追加 (Enter)" list="tagDatalist" /><button class="btn-tag-add btn-primary">+</button>`;
+      row.innerHTML = `<input type="text" class="tag-add-input" placeholder="Myタグを追加 (Enter)" list="tagDatalist" /><button class="btn-tag-add btn-primary">+</button>`;
       const tagInput = row.querySelector(".tag-add-input");
       const tagBtn = row.querySelector(".btn-tag-add");
       frag.appendChild(row);
@@ -454,7 +461,7 @@
   // セクション ID → タイトル + 補助 (statusスパン等)
   const sectionMeta = {
     preview:  { title: "画像", noTitle: true },     // 画像 + ファイル名 + メタを内包
-    tags:     { title: "タグ" },
+    tags:     { title: "Myタグ" },
     memo:     { title: "メモ", extraHeader: '<span class="memo-status"></span>' },
     positive: { title: "Positive Prompt" },
     negative: { title: "Negative Prompt" },
@@ -567,6 +574,233 @@
     });
   }
 
+  // ============================================================
+  // プロンプト並び替え（comfy-prompt-helper の sort-tags.js 移植版）
+  // 画像メタデータ（ファイル）は一切触らず、表示中の <pre> のテキストだけを
+  // カテゴリ別ソート版に切り替える。コピーは現在の表示内容を対象にする。
+  // Danbooru CSV ベースの character/copyright/artist/meta 分類は持たず、
+  // 純粋なキーワードルールでカテゴリ振り分けする（簡易版）。
+  // ============================================================
+  const PROMPT_SORT_CATEGORY_ORDER = [
+    "character", "copyright", "artist",
+    "subject", "body", "skin", "hair", "face", "emotion",
+    "clothing", "accessories", "pose", "composition", "scene",
+    "lighting", "quality", "meta", "nsfw", "unknown", "lora",
+  ];
+  const PROMPT_SORT_CATEGORY_LABEL = {
+    character: "キャラクター", copyright: "作品", artist: "作者",
+    subject: "人物", body: "体型・年齢", skin: "肌・体質", hair: "髪",
+    face: "口・目・視線", emotion: "表情・感情", clothing: "服装",
+    accessories: "装飾品・持ち物", pose: "姿勢・動作",
+    composition: "構図・視点", scene: "背景・場所",
+    lighting: "光・色調", quality: "品質", meta: "メタ",
+    nsfw: "性表現", unknown: "その他", lora: "LoRA",
+  };
+  // Danbooru CSV から取得した {タグ名(lower): カテゴリ} の逆引き Map。
+  // 起動時に /api/prompt-category-map で一度だけロードする。失敗してもキーワードルールにフォールバックするのでアプリ機能は止めない。
+  const PROMPT_DANBOORU_CATEGORY = new Map();
+
+  // ユーザー指定の「品質タグ強制」リスト。CSV カテゴリより優先して quality バケットへ振る。
+  // キーは _normalizePromptToken 後の形式（lower-case、スペース→アンダースコア、エスケープ括弧解除済み）。
+  // ハイフン形式のタグ（"ultra-detailed"）はそのまま登録する。
+  const PROMPT_QUALITY_OVERRIDE = new Set([
+    "masterpiece",
+    "best_quality",
+    "year_2025",
+    "newest",
+    "nsfw",
+    "full_color",
+    "colorful",
+    "intricate",
+    "clean",
+    "fine",
+    "detailed",
+    "very_aesthetic",
+    "amazing_quality",
+    "oily",
+    "extremely_hyghres_resolution",
+    "ultra-detailed",
+    "intricate_detailed_face_and_eyes",
+    "intricate_shiny_hair_line",
+    "amazing_detailed_skin",
+    "shiny_skin",
+    "realistic",
+    "uncensored",
+  ]);
+  // キーワードルール（先頭から評価し、最初にヒットしたカテゴリへ振り分ける）。
+  // キーワードは正規化済みタグ文字列（lower-case、'_' のまま）に対する正規表現または部分一致。
+  const PROMPT_SORT_KEYWORD_RULES = [
+    { cat: "subject", patterns: [/^\d+\+?(girl|boy|other)s?$/, /^(solo|multiple_(girls|boys|others)|group|crowd|no_humans|couple|duo|trio|harem|reverse_harem)$/, "faceless_", /_male$/, /_female$/, "androgynous", "trap", "otoko_no_ko"] },
+    { cat: "body", patterns: ["breasts", "nipples", "muscular", "chubby", "thick", "slim", "skinny", "petite", "tall", "short_stature", "loli", "shota", "mature", "milf", "young", "old_man", "old_woman", "adult", "teenager", "child", "elderly", "thigh_gap", "wide_hips", "curvy", "slender", "abs", "navel", "belly", "pregnant", "_thighs", "_legs"] },
+    // 肌・体質（skin/汗/タトゥー/ほくろ/痣・傷・包帯/体毛など）。hair より先に置いて "body_hair" 等を確保する。
+    { cat: "skin", patterns: [
+      // 肌の状態・色
+      "damaged_skin", "chapped_skin", "dry_skin", "cracked_skin", "peeling_skin",
+      "scaly_skin", "discolored_skin", "dark_skin", "pale_skin", "fair_skin",
+      "olive_skin", /^tan$/, "tanned", "sun_tan", "sunburn", "tanlines", "tan_line",
+      "dark-skinned",
+      // 汗
+      /^sweat($|_)/, "sweating", "sweaty", "perspiration", "damp_skin", "dripping_sweat",
+      // タトゥー・体表ペイント（pubic_tattoo / arm_tattoo / chest_tattoo など部位別も部分一致で拾う）
+      "tattoo", "henna", "body_paint", "face_paint", "body_writing", "branding",
+      // ほくろ・そばかす・あざ
+      "birthmark", /^mole($|_)/, "freckle", "freckles", "blemish",
+      // 傷・痣・包帯
+      /^bruis/, /^wound/, "bandage", "bandaged", /^scar(red|s)?$/, /^scar_/, "stitch", "stitches",
+      // 体毛・その他体表
+      "goosebumps", "body_hair", "arm_hair", "leg_hair", "chest_hair", "armpit_hair",
+      "pubic_hair", "shaved_pubic_hair", "trimmed_pubic_hair", "happy_trail",
+    ] },
+    { cat: "hair", patterns: ["hair", "bangs", "ponytail", "twintails", "twin_tails", "braid", "braids", "bun", "ahoge", "sidelocks", "drill", "ringlet"] },
+    { cat: "emotion", patterns: ["smile", "smiling", "frown", "blush", "blushing", "expression", "tear", "tears", "crying", "sobbing", "laughing", "giggle", "angry", "anger", "rage", "fury", "sad", "sadness", "happy", "happiness", "joy", "joyful", "ecstatic", "surprised", "shocked", "embarrassed", "embarrass", "ashamed", "shame", "frustrated", "frustration", "scowl", "smirk", "pout", "pouting", "smug", "shy", "bashful", "timid", "depressed", "gloomy", "melancholic", "melancholy", "nostalgic", "bored", "boredom", "disgust", "disgusted", "disappointed", "disappointment", "scared", "fear", "afraid", "terrified", "horror", "worried", "anxious", "concerned", "confused", "puzzled", "jealous", "envy", "lonely", "peaceful", "relaxed", "calm", "content", "serene", "annoyed", "irritated", "drunk", "tipsy", "tired", "exhausted", "sleepy", "drowsy", "excited", "ecstasy", "seductive", "flirting", "yandere", "tsundere", "kuudere", "dandere", "humiliation", "humiliated", "humiliating", "guilt", "guilty", "regret", "regretful", "proud", "pride", "arrogant", "smug_face", "ahegao", /gao$/, "_face"] },
+    // 口・目・視線（旧 eyes と face を統合）
+    { cat: "face", patterns: [
+      // 目（複数形 "*_eyes" は "eyes" 単純文字列で拾うので、ここでは単数形 "*_eye" や状態系を補強）
+      "eyes", "eye_", /_eye$/, "closed_eye", "half_closed_eye", "half_closed_eyes",
+      "narrowed_eyes", "empty_eyes", "glowing_eye", "glowing_eyes", "crazy_eyes",
+      "wide-eyed", "rolling_eyes", "tareme", "tsurime", "jitome",
+      "eyelash", "eyebrow", "pupils", "heterochromia",
+      // 口・歯・舌
+      "open_mouth", "closed_mouth", "parted_lips", "tongue", "teeth", "fang", "lips", "lipstick",
+      // 視線
+      "looking_at", "looking_away", "looking_back", "looking_up", "looking_down",
+      // 目・口の動作
+      "wink", "eyes_closed", "one_eye_closed", "drool", "saliva", "kiss", "kissing", "biting",
+    ] },
+    { cat: "clothing", patterns: ["shirt", "blouse", "dress", "skirt", "pants", "shorts", "trouser", "jacket", "coat", "hoodie", "uniform", "swimsuit", "bikini", "leotard", "bodysuit", "costume", "armor", "robe", "kimono", "yukata", "haori", "sailor_", "school_", "thigh_high", "stocking", "pantyhose", "tights", "sock", "boot", "shoe", "sandal", "glove", "scarf", "tie", "necktie", "ribbon", "hood", "sleeve", "collar", "apron", "cape", "cloak", "panties", "underwear", "bra", "lingerie", "naked", "nude", "topless", "bottomless", "see-through", "transparent_clothes", "clothes", "clothing", "outfit", "attire", "garment", "wear", "vest", "cardigan", "sweater", "tank_top", "tube_top", "crop_top", "halter", "off_shoulder", "bare_shoulder", "midriff", "cleavage", "formal", "suit", "tuxedo", "business_suit", "casual", "gothic", "lolita", "punk", "sportswear", "tracksuit", "pajama", "nightgown", "nightie", "negligee", "fishnet", "piercing", "pierced", "skin_tight", "tight_dress", "tight_pants", "tight_shirt", "bodycon", "spandex", "latex_clothes", "leather_clothes"] },
+    { cat: "accessories", patterns: ["hat", "cap", "helmet", "mask", "glasses", "sunglasses", "monocle", "earring", "necklace", "ring", "bracelet", "anklet", "jewelry", "bag", "backpack", "umbrella", "weapon", "sword", "knife", "gun", "staff", "wand", "shield", "phone", "book", "flower", "holding_", "hairpin", "hair_ornament", "headband", "headphone", "tiara", "crown", "veil", "wings", "tail", "horns", "halo"] },
+    { cat: "pose", patterns: ["sitting", "standing", "lying", "kneeling", "squatting", "crouching", "leaning", "bending", "walking", "running", "jumping", "flying", "falling", "floating", "hugging", "kissing", "holding", "carrying", "reaching", "pointing", "waving", "saluting", "dancing", "fighting", "sleeping", "resting", "stretching", "spread", "crossed", "raised", "outstretched", "arms_", "hands_", "legs_", "feet_", "knees_", "fingers_", "_pose", "all_fours", "lap_pillow", "piggyback"] },
+    { cat: "composition", patterns: ["close-up", "closeup", "portrait", "full_body", "upper_body", "lower_body", "cowboy_shot", "from_above", "from_below", "from_side", "from_behind", "from_back", "front_view", "back_view", "side_view", "rear_view", "perspective", "depth_of_field", "bokeh", "wide_shot", "medium_shot", "long_shot", "_shot", "_view", "framed", "vignette", "looking_at_viewer", "dutch_angle", "dutch_tilt", "tilted", "tilt", "fisheye", "wide_angle", "telephoto", "macro", "establishing_shot", "bird's-eye_view", "worm's-eye_view", "pov", "first_person", "third_person", "over_the_shoulder", "focus", "_focus", "in_focus", "out_of_focus", "blurry", "blur", "motion_blur", "rule_of_thirds", "centered", "symmetrical_composition", "asymmetric"] },
+    { cat: "scene", patterns: ["outdoors", "outside", "indoors", "inside", "sky", "cloud", "tree", "forest", "beach", "ocean", "sea", "river", "lake", "pond", "mountain", "hill", "city", "street", "alley", "rooftop", "room", "bedroom", "bathroom", "kitchen", "living_room", "house", "building", "shop", "school", "classroom", "office", "park", "garden", "field", "meadow", "desert", "snow_field", "cave", "ruins", "castle", "shrine", "temple", "church", "library", "cafe", "restaurant", "bar", "station", "bus", "train", "car", "boat", "ship", "airplane", "starry_sky", "sunset", "sunrise", "twilight", "night", "evening", "morning", "noon", "daytime", "midnight", "dawn", "dusk", /^day$/, /^night$/, "afternoon", "midday", "summer", "winter", "spring", "autumn", "fall_season", "rain", "snow", "snowing", "wind", "fog", "mist", "storm", "rainbow", "background", "scenery", "landscape", "wallpaper", "outdoor", "indoor",
+      // 拘束・医療・娯楽・公共・スポーツ系の場所
+      "prison", "prison_cell", "jail", "jail_cell", "dungeon", "interrogation_room",
+      "courtroom", "hospital", "hospital_room", "clinic", "operating_room",
+      "gym", "locker_room", "hotel", "hotel_room", "motel", "casino", "arcade",
+      "museum", "theater", "stadium", "swimming_pool", /^pool$/, "sauna",
+      "bathhouse", "public_bath", "onsen", "hot_spring", "spa",
+      "factory", "warehouse", "attic", "basement", "garage", "abandoned_building"] },
+    { cat: "lighting", patterns: ["light", "lighting", "shadow", "shadows", "glow", "glowing", "shine", "shining", "sparkle", "sparkling", "dark", "darkness", "bright", "dim", "lens_flare", "backlight", "rim_light", "cinematic", "dramatic", "soft_light", "hard_light", "natural_light", "neon", "moonlight", "sunlight", "candlelight", "spotlight", "color_palette", "monochrome", "sepia", "grayscale", "vibrant", "vivid", "pastel", "saturated", "desaturated"] },
+    { cat: "quality", patterns: ["masterpiece", "best_quality", "high_quality", "highres", "absurdres", "ultra_detailed", "ultra-detailed", "very_detailed", "detailed", "intricate", "8k", "4k", "2k", "hd", "uhd", "fhd", "professional", "perfect", "amazing", "stunning", "beautiful", "gorgeous", "exquisite", "score_", "_quality", "shiny_skin", "smooth_skin", "glossy_skin", "wet_skin", "oily_skin", "skin_texture", "detailed_skin", "realistic_skin"] },
+    { cat: "nsfw", patterns: [
+      "cum", "semen", "sperm", "ejaculation", "ejaculating", "jizz", "creampie", "bukkake",
+      "pussy", "vagina", "cunt", "vulva", "clitoris", "labia",
+      "penis", "cock", /^dick$/, "phallic", "testicles", "scrotum",
+      "anus", /^anal$/, "anal_sex", "rimjob",
+      "sex", "intercourse", "fucking", "fellatio", "blowjob", "handjob", "footjob", "paizuri",
+      "deepthroat", "facial", "gangbang", "threesome", "foursome", "orgy",
+      "orgasm", "climax", "masturbation", "fingering", "tribadism", "scissoring",
+      "futanari", "futa", "futasub", "futadom",
+      "erection", "erect_", "throbbing",
+      "lewd", "ecchi", "hentai", "porn",
+      "molest", "molestation", "groping",
+      "hymen", "virgin", "deflower",
+      "censored", "uncensored", "mosaic_censoring", "bar_censor",
+      "bondage", "bdsm", "shibari", "kinbaku",
+      "gaping", "prolapse",
+      "breast_sucking", "nipple_sucking",
+      // 挿入・乳汁系（明示で nsfw 振り分け）
+      "penetration", "vaginal_penetration", "anal_penetration", "double_penetration",
+      "lactation", "lactating", "breast_milk", "milking",
+    ] },
+  ];
+
+  // "(tag:1.2)" / "[tag]" / 重みサフィックスを剥がして lower-case 化する。
+  // 注意: 先頭の "@" マーカーは保持する（_classifyPromptToken でアーティスト判定に使う）。
+  function _normalizePromptToken(raw) {
+    let s = (raw || "").trim();
+    if (!s) return "";
+    while (s.length >= 2 && ((s[0] === "(" && s[s.length - 1] === ")") || (s[0] === "[" && s[s.length - 1] === "]"))) {
+      s = s.slice(1, -1).trim();
+      if (!s) return "";
+    }
+    s = s.replace(/:\s*-?\d+(\.\d+)?\s*$/, "").trim();
+    // a1111/ComfyUI でリテラル括弧として書かれる "\(" "\)" のエスケープを外し、
+    // "hatsune_miku_\(vocaloid\)" を "hatsune_miku_(vocaloid)" と同じ扱いにする
+    s = s.replace(/\\([()])/g, "$1");
+    // Booru CSV のキーは "_" 区切り。プロンプト中はスペース区切りで書かれることがあるので統一する。
+    s = s.toLowerCase().replace(/\s+/g, "_");
+    return s;
+  }
+  function _isLoraToken(raw) {
+    const s = (raw || "").trim();
+    return s.startsWith("<lora:") || s.startsWith("<lyco:");
+  }
+  function _classifyPromptToken(raw) {
+    const key = _normalizePromptToken(raw);
+    if (!key) return "unknown";
+    // Danbooru の慣習で "@..." 始まりはアーティスト印（CSV ヒット可否に関係なく確定）
+    if (key.startsWith("@")) return "artist";
+    // ユーザー指定の品質タグ強制リスト（CSV カテゴリより優先）
+    if (PROMPT_QUALITY_OVERRIDE.has(key)) return "quality";
+    // NSFW 強制：cum 系は composition の "_shot" にぶつかるため明示的に先取り。
+    // "cumulus" 等の自然語は単語境界条件で除外する。
+    if (/(^|[_-])cum([_-]|$)/.test(key)) return "nsfw";
+    // META 強制：Danbooru の "hetero" 系メタタグ（heterochromia は次が "c" なので除外される）
+    if (/^hetero($|_)/.test(key)) return "meta";
+    // Danbooru CSV 由来のカテゴリを最優先で確定（character / copyright / artist / meta）
+    const dCat = PROMPT_DANBOORU_CATEGORY.get(key);
+    if (dCat) return dCat;
+    // "hatsune_miku_(vocaloid)" のような末尾 "_(franchise)" 付きは（CSV に無くても）character 推定
+    if (/_\([a-z0-9][a-z0-9_:.\-]*\)$/.test(key)) return "character";
+    for (const rule of PROMPT_SORT_KEYWORD_RULES) {
+      for (const p of rule.patterns) {
+        if (p instanceof RegExp) {
+          if (p.test(key)) return rule.cat;
+        } else if (key.includes(p)) {
+          return rule.cat;
+        }
+      }
+    }
+    return "unknown";
+  }
+  // 起動時に Danbooru CSV のカテゴリ別タグ一覧をロードして PROMPT_DANBOORU_CATEGORY に詰める。
+  async function loadPromptDanbooruCategoryMap() {
+    try {
+      const res = await fetch("/api/prompt-category-map");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || typeof data !== "object") return;
+      for (const [cat, tags] of Object.entries(data)) {
+        if (!Array.isArray(tags)) continue;
+        for (const t of tags) {
+          if (typeof t === "string" && t.length > 0) {
+            PROMPT_DANBOORU_CATEGORY.set(t.toLowerCase(), cat);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[ComfyImageOrganizer] prompt-category-map のロード失敗:", e);
+    }
+  }
+  // text を「カテゴリ別にラベルコメント付きで並び替えた版」に変換して返す。
+  // 区切りはカンマと改行の両方を許容、出力は各カテゴリの先頭に "// ラベル" コメント行を入れる。
+  function sortPromptText(text) {
+    const tokens = (text || "")
+      .split(/[,\n]/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    if (!tokens.length) return text || "";
+    const buckets = new Map();
+    for (const cat of PROMPT_SORT_CATEGORY_ORDER) buckets.set(cat, []);
+    for (const tok of tokens) {
+      const cat = _isLoraToken(tok) ? "lora" : _classifyPromptToken(tok);
+      buckets.get(cat).push(tok);
+    }
+    // unknown はアルファベット順に
+    const unknownArr = buckets.get("unknown");
+    if (unknownArr && unknownArr.length > 1) {
+      unknownArr.sort((a, b) => _normalizePromptToken(a).localeCompare(_normalizePromptToken(b)));
+    }
+    const lines = [];
+    for (const cat of PROMPT_SORT_CATEGORY_ORDER) {
+      const arr = buckets.get(cat);
+      if (!arr.length) continue;
+      const label = PROMPT_SORT_CATEGORY_LABEL[cat] ?? cat;
+      lines.push(`// ${label}\n${arr.join(", ")}`);
+    }
+    return lines.join(",\n\n");
+  }
+
   // セクション本体だけを返す (タイトルは buildSection 側で h3 を付ける)
   function promptBlockBody(title, text) {
     const wrap = document.createElement("div");
@@ -580,14 +814,48 @@
     wrap.appendChild(pre);
 
     if (text) {
-      const btn = document.createElement("button");
-      btn.className = "copy-btn btn-sub";
-      btn.textContent = "コピー";
-      btn.onclick = async () => {
-        await navigator.clipboard.writeText(text);
+      // ボタン群は 1 つの bar にまとめてレイアウト統一
+      const bar = document.createElement("div");
+      bar.className = "prompt-btn-bar";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "copy-btn btn-sub";
+      copyBtn.textContent = "コピー";
+      copyBtn.title = "現在表示中のテキストをクリップボードへ";
+      copyBtn.onclick = async () => {
+        // 並び替え後ならその表示テキストをコピー、そうでなければ元テキスト
+        await navigator.clipboard.writeText(pre.textContent || "");
         setStatus(`${title} をクリップボードにコピーしました`);
       };
-      wrap.appendChild(btn);
+      bar.appendChild(copyBtn);
+
+      const sortBtn = document.createElement("button");
+      sortBtn.className = "sort-btn btn-sub";
+      sortBtn.textContent = "並べ替え";
+      sortBtn.title = "カテゴリ別に並び替えて表示（ファイルは更新しません）";
+
+      const undoBtn = document.createElement("button");
+      undoBtn.className = "undo-btn btn-sub";
+      undoBtn.textContent = "戻る";
+      undoBtn.title = "並び替え前の表示に戻す";
+      undoBtn.disabled = true;
+
+      sortBtn.onclick = () => {
+        const sorted = sortPromptText(text);
+        if (!sorted || sorted === pre.textContent) return;
+        pre.textContent = sorted;
+        undoBtn.disabled = false;
+        sortBtn.disabled = true;
+      };
+      undoBtn.onclick = () => {
+        pre.textContent = text;
+        undoBtn.disabled = true;
+        sortBtn.disabled = false;
+      };
+
+      bar.appendChild(sortBtn);
+      bar.appendChild(undoBtn);
+      wrap.appendChild(bar);
     }
     return wrap;
   }
@@ -596,14 +864,14 @@
     pane.innerHTML = `
       <h3>${state.selected.size} 枚 選択中</h3>
       <div class="row">
-        <input type="text" id="bulkAddInput" placeholder="追加するタグ (カンマ区切り可)" list="tagDatalist" />
+        <input type="text" id="bulkAddInput" placeholder="追加するMyタグ (カンマ区切り可)" list="tagDatalist" />
         <button id="bulkAdd" class="btn-primary">+ 付与</button>
       </div>
       <div class="row">
-        <input type="text" id="bulkRemoveInput" placeholder="外すタグ" list="tagDatalist" />
+        <input type="text" id="bulkRemoveInput" placeholder="外すMyタグ" list="tagDatalist" />
         <button id="bulkRemove" class="danger">- 解除</button>
       </div>
-      <h3>既存タグ</h3>
+      <h3>既存Myタグ</h3>
       <div id="bulkTagList" class="chips"></div>
       <datalist id="tagDatalist"></datalist>
     `;
@@ -619,7 +887,7 @@
       c.className = "chip";
       c.textContent = `${t.name} (${t.image_count})`;
       c.style.cursor = "pointer";
-      c.title = "クリックで選択中の画像にタグ付与";
+      c.title = "クリックで選択中の画像にMyタグ付与";
       c.onclick = async () => {
         await api("/api/tags/assign", {
           method: "POST",
@@ -647,7 +915,7 @@
         }),
       });
       $("#bulkAddInput").value = "";
-      setStatus(`${state.selected.size} 枚にタグ付与`);
+      setStatus(`${state.selected.size} 枚にMyタグ付与`);
       await reloadTags();
       renderRightPane();
     };
@@ -662,7 +930,7 @@
         }),
       });
       $("#bulkRemoveInput").value = "";
-      setStatus(`${state.selected.size} 枚からタグ削除`);
+      setStatus(`${state.selected.size} 枚からMyタグ削除`);
       await reloadTags();
       renderRightPane();
     };
@@ -1239,6 +1507,8 @@
     } catch (e) {
       setStatus("初期化失敗: " + e.message);
     }
+    // Danbooru CSV カテゴリは並べ替え機能でしか使わないので、メイン UI ロードを止めず後追いで取得
+    loadPromptDanbooruCategoryMap();
     startEventStream();
   }
 

@@ -405,6 +405,17 @@ def list_prompt_tags(
     return repo.list_prompt_tag_suggestions(conn, query=q, limit=limit)
 
 
+@router.get("/api/prompt-category-map")
+def get_prompt_category_map() -> dict[str, list[str]]:
+    """並び替え機能用：Danbooru CSV のカテゴリ別タグ一覧。
+
+    フロント側の右ペイン「並べ替え」ボタンで、括弧無しキャラ名や @ 無しアーティスト名を
+    確実に分類するために使う。レスポンス形式: {category_label: [tag_lower, ...]}
+    （character / copyright / artist / meta のみ。general は除外）
+    """
+    return repo.get_prompt_category_map()
+
+
 @router.post("/api/tags/assign")
 def assign_tags(body: TagAssignRequest, conn=Depends(get_conn)) -> dict[str, Any]:
     if not body.image_ids:

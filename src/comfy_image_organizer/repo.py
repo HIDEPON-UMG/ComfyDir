@@ -774,3 +774,21 @@ def list_prompt_tag_suggestions(
             "translation": _lookup_translation(ent["name"], ent.get("aliases")),
         })
     return out
+
+
+def get_prompt_category_map() -> dict[str, list[str]]:
+    """Danbooru CSV から character/copyright/artist/meta カテゴリのタグだけを抽出する。
+
+    フロント側の並び替え機能で「カッコ無しキャラ名」「@ 抜きアーティスト名」を確実に
+    振り分けるために使う。general はサイズが大きい上に分類精度に貢献しないので除外。
+    キーは Booru 風 lower-case 正式名。
+    """
+    with _PROMPT_TAG_LOCK:
+        _ensure_danbooru_loaded()
+        out: dict[str, list[str]] = {}
+        for key, info in _PROMPT_DANBOORU_DATA.items():
+            cat = _DANBOORU_CATEGORY.get(info["category"])
+            if not cat or cat == "general":
+                continue
+            out.setdefault(cat, []).append(key)
+        return out
