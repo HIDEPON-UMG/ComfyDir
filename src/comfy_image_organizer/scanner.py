@@ -96,6 +96,9 @@ def _index_one(folder_id: int, file_path: Path) -> dict[str, Any] | None:
     finally:
         conn.close()
 
+    # プロンプトオートコンプリート用のキャッシュを次回参照時に再構築
+    repo.invalidate_prompt_tag_index()
+
     return {
         "image_id": image_id,
         "filename": file_path.name,
@@ -127,6 +130,9 @@ def full_scan(folder_id: int, folder_path: str) -> int:
                 repo.delete_image_by_path(conn, db_path)
     finally:
         conn.close()
+
+    # プロンプトオートコンプリート用のキャッシュを次回参照時に再構築
+    repo.invalidate_prompt_tag_index()
 
     log.info("フルスキャン完了: folder_id=%s, %d 件", folder_id, count)
     return count
@@ -284,6 +290,8 @@ class ScannerManager:
                     repo.delete_image_by_path(conn, str(path))
                 finally:
                     conn.close()
+                # プロンプトオートコンプリート用のキャッシュを次回参照時に再構築
+                repo.invalidate_prompt_tag_index()
                 self._emit(ScanEvent(
                     type="image_removed",
                     folder_id=folder_id,

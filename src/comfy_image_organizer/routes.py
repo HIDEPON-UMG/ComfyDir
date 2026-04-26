@@ -391,6 +391,20 @@ def list_tags(conn=Depends(get_conn)) -> list[dict[str, Any]]:
     return [{"id": r["id"], "name": r["name"], "image_count": r["image_count"]} for r in rows]
 
 
+@router.get("/api/prompt-tags")
+def list_prompt_tags(
+    q: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=100),
+    conn=Depends(get_conn),
+) -> list[dict[str, Any]]:
+    """プロンプト検索バー用のオートコンプリート候補を返す。
+
+    a1111-sd-webui-tagcomplete 風: DB 内の全画像の positive/negative プロンプトから
+    カンマ区切りでタグを集計し、出現回数の多い順に候補を返す。
+    """
+    return repo.list_prompt_tag_suggestions(conn, query=q, limit=limit)
+
+
 @router.post("/api/tags/assign")
 def assign_tags(body: TagAssignRequest, conn=Depends(get_conn)) -> dict[str, Any]:
     if not body.image_ids:

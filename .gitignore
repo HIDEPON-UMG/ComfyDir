@@ -15,6 +15,10 @@ venv/
 /data/server.log
 /data/server.log.*
 
+# プロンプトオートコンプリート用の外部辞書 (tools/download_tag_dictionaries.py で取得)
+/data/danbooru_tags/
+/data/danbooru_translations/
+
 # Generated shortcut (created locally by tools/create_shortcut.vbs)
 /ComfyDir.lnk
 /ComfyImageOrganizer.lnk

@@ -601,3 +601,95 @@ dialog.lightbox .lightbox-close:hover {
   display: block;
   margin-left: 18px;
 }
+
+/* ---------------- プロンプト検索バーのオートコンプリート ---------------- */
+.prompt-search-wrap {
+  position: relative;
+  display: inline-block;
+}
+.tag-suggest {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  min-width: 280px;
+  max-width: 480px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.tag-suggest-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tag-suggest-item:hover { background: #2f3340; }
+.tag-suggest-item.active {
+  background: linear-gradient(180deg, #3964b8, #2e518f);
+  color: #fff;
+}
+.tag-suggest-item.active .ts-count { color: #d0deff; }
+.ts-name { overflow: hidden; text-overflow: ellipsis; }
+.ts-count {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+/* 由来 (positive / negative / both / reference) によるタグ名の色分け */
+.ts-src-positive  .ts-name { color: #cfd9ff; }
+.ts-src-negative  .ts-name { color: #f0c4c4; }
+.ts-src-both      .ts-name { color: #ffe6a8; }
+/* reference は CSV 由来のみ (DB に未登場) → 控えめなグレー */
+.ts-src-reference .ts-name { color: #b9bdc7; }
+
+/* a1111-tagcomplete 互換: Danbooru カテゴリで上書きする色分け */
+/* 0: general → 既存色のまま、ここでは指定しない */
+.ts-cat-artist     .ts-name { color: #d97a4a; }   /* 1: artist (オレンジ) */
+.ts-cat-copyright  .ts-name { color: #b387f5; }   /* 3: copyright (紫) */
+.ts-cat-character  .ts-name { color: #6dd17d; }   /* 4: character (緑) */
+.ts-cat-meta       .ts-name { color: #d9c66b; }   /* 5: meta (黄) */
+
+/* 選択行のときは強いコントラストの白へ */
+.tag-suggest-item.active .ts-name { color: #fff; }
+
+/* カテゴリラベル (artist/copyright/character/meta) を右寄せの小さなバッジで表示 */
+.ts-cat-label {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg-dim);
+  text-transform: lowercase;
+  letter-spacing: 0.3px;
+}
+.ts-cat-artist    .ts-cat-label { background: rgba(217, 122, 74, 0.18); color: #e9a07c; }
+.ts-cat-copyright .ts-cat-label { background: rgba(179, 135, 245, 0.18); color: #cab1f8; }
+.ts-cat-character .ts-cat-label { background: rgba(109, 209, 125, 0.18); color: #9bdca7; }
+.ts-cat-meta      .ts-cat-label { background: rgba(217, 198, 107, 0.18); color: #e3d491; }
+
+/* エイリアスマッチ表示 (例: "breasts ↳ oppai") */
+.ts-alias {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.tag-suggest-item.active .ts-alias { color: #d8def0; }
+
+/* 日本語翻訳表示 (例: "; 一人の女の子") */
+.ts-translation {
+  font-size: 12px;
+  color: #9fb3da;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag-suggest-item.active .ts-translation { color: #e6efff; }

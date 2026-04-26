@@ -1019,6 +1019,174 @@
       reloadImages();
     };
 
+    // ---------------- プロンプト検索バーのオートコンプリート (a1111-tagcomplete 風) ----------------
+    // 入力中の最後のスペース区切りトークンに対して /api/prompt-tags?q=... を叩き、
+    // ↑↓Tab/Enter で挿入、Esc で閉じる。Booru 風の '_' は ' ' と同一視される。
+    function setupPromptSuggest() {
+      const input = $("#promptSearch");
+      const box = $("#promptSuggest");
+      if (!input || !box) return;
+
+      let items = [];           // {name, count, source}[]
+      let active = -1;          // ハイライト中の index
+      let lastQuery = "";       // 直近で問い合わせた最終トークン
+      let timer = null;
+      let abortCtrl = null;
+      let suppressOpen = false; // 値挿入直後のフォーカス継続で誤って再オープンしないため
+
+      // input の先頭から caret 位置までのテキストから「最後のトークン」を取り出す。
+      // 区切りはスペース類のみ（既存検索ロジックが空白区切り AND のため）。
+      function lastToken() {
+        const pos = input.selectionStart ?? input.value.length;
+        const left = input.value.slice(0, pos);
+        const m = left.match(/(?:^|\s)([^\s]*)$/);
+        return { token: m ? m[1] : "", start: m ? pos - m[1].length : pos, end: pos };
+      }
+
+      function close() {
+        box.hidden = true;
+        box.innerHTML = "";
+        items = [];
+        active = -1;
+      }
+
+      function render() {
+        if (!items.length) { close(); return; }
+        box.innerHTML = "";
+        items.forEach((it, i) => {
+          const row = document.createElement("div");
+          row.className = "tag-suggest-item" + (i === active ? " active" : "");
+          if (it.category) row.classList.add("ts-cat-" + it.category);
+          if (it.source) row.classList.add("ts-src-" + it.source);
+          row.dataset.index = String(i);
+          row.setAttribute("role", "option");
+          // 表示名は Booru 風の '_' を ' ' に変換した方が読みやすいので置換 (内部値は維持)
+          const display = it.name.replace(/_/g, " ");
+          let html = `<span class="ts-name">${escapeHtml(display)}</span>`;
+          if (it.translation) {
+            // ユーザー指定書式: "<タグ名> ; <日本語翻訳>"
+            html += `<span class="ts-translation">; ${escapeHtml(it.translation)}</span>`;
+          }
+          if (it.alias_hit) {
+            // エイリアス由来は "(via <alias>)" を添えて分かるようにする
+            const aliasDisp = it.alias_hit.replace(/_/g, " ");
+            html += `<span class="ts-alias">↳ ${escapeHtml(aliasDisp)}</span>`;
+          }
+          if (it.category) {
+            // a1111-tagcomplete 風: カテゴリラベルを小さく表示 (general 以外)
+            if (it.category !== "general") {
+              html += `<span class="ts-cat-label">${escapeHtml(it.category)}</span>`;
+            }
+          }
+          html += `<span class="ts-count">${it.count.toLocaleString()}</span>`;
+          row.innerHTML = html;
+          row.onmousedown = (ev) => {
+            // mousedown で挿入 (click だと先に input の blur が走って box が閉じてしまう)
+            ev.preventDefault();
+            choose(i);
+          };
+          box.appendChild(row);
+        });
+        box.hidden = false;
+      }
+
+      async function fetchSuggest(q) {
+        if (abortCtrl) abortCtrl.abort();
+        abortCtrl = new AbortController();
+        try {
+          const res = await fetch(
+            "/api/prompt-tags?q=" + encodeURIComponent(q) + "&limit=20",
+            { signal: abortCtrl.signal },
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          // 入力が変わっていたら破棄
+          if (lastToken().token !== q) return;
+          items = Array.isArray(data) ? data : [];
+          active = items.length ? 0 : -1;
+          render();
+        } catch (e) {
+          if (e.name !== "AbortError") {
+            // ネットワーク等の失敗時は閉じるだけ（ユーザー操作は阻害しない）
+            close();
+          }
+        }
+      }
+
+      function scheduleQuery() {
+        if (suppressOpen) { suppressOpen = false; return; }
+        const { token } = lastToken();
+        // 1 文字以上で起動（0 文字だと候補数が膨大になりノイジー）
+        if (!token || token.length < 1) { close(); return; }
+        if (token === lastQuery && !box.hidden) return;
+        lastQuery = token;
+        clearTimeout(timer);
+        timer = setTimeout(() => fetchSuggest(token), 120);
+      }
+
+      function choose(idx) {
+        if (idx < 0 || idx >= items.length) return;
+        const it = items[idx];
+        const { start, end } = lastToken();
+        // 表示同様、内部値も '_' は ' ' に変換して挿入する（DB 側の検索は空白区切り AND のため）
+        const insert = it.name.replace(/_/g, " ");
+        const before = input.value.slice(0, start);
+        const after = input.value.slice(end);
+        // a1111-tagcomplete と同じく挿入直後にスペースを 1 個追加して連続入力できるようにする
+        const sep = (after.startsWith(" ") || after === "") ? "" : " ";
+        const newVal = before + insert + (after === "" ? " " : sep) + after;
+        input.value = newVal;
+        const caret = (before + insert + (after === "" ? " " : sep)).length;
+        input.setSelectionRange(caret, caret);
+
+        suppressOpen = true;
+        close();
+        // 既存の bindSearchBox の input ハンドラを起こして検索を反映させる
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+      }
+
+      input.addEventListener("input", scheduleQuery);
+      input.addEventListener("focus", scheduleQuery);
+      input.addEventListener("click", scheduleQuery);
+      input.addEventListener("keyup", (ev) => {
+        // 矢印・Home/End によるカーソル移動でもトークンが変わるので候補を更新
+        if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) {
+          scheduleQuery();
+        }
+      });
+
+      input.addEventListener("keydown", (ev) => {
+        if (box.hidden || !items.length) return;
+        if (ev.key === "ArrowDown") {
+          ev.preventDefault();
+          active = (active + 1) % items.length;
+          render();
+        } else if (ev.key === "ArrowUp") {
+          ev.preventDefault();
+          active = (active - 1 + items.length) % items.length;
+          render();
+        } else if (ev.key === "Enter" || ev.key === "Tab") {
+          // 候補を採用したいときだけインターセプト。Enter は bindSearchBox の即時検索より優先。
+          if (active >= 0) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            choose(active);
+          }
+        } else if (ev.key === "Escape") {
+          // 入力値はクリアせず、候補ドロップダウンだけ閉じる
+          ev.preventDefault();
+          ev.stopPropagation();
+          close();
+        }
+      }, true); // capture: bindSearchBox の Enter ハンドラより先に走らせる
+
+      // フォーカス外れたら閉じる (mousedown で choose 済みのため安全)
+      input.addEventListener("blur", () => {
+        setTimeout(close, 100);
+      });
+    }
+
     // 検索ボックス共通: 300ms デバウンス + Enter 即時 + Esc クリア
     function bindSearchBox(inputId, clearBtnId, stateKey) {
       const input = $("#" + inputId);
@@ -1055,6 +1223,8 @@
     }
     bindSearchBox("promptSearch", "promptSearchClear", "promptQuery");
     bindSearchBox("memoSearch", "memoSearchClear", "memoQuery");
+
+    setupPromptSuggest();
 
     setupSplitter();
     setupLightbox();

@@ -51,9 +51,12 @@
 
     <div class="ctl">
       <label>検索:</label>
-      <input id="promptSearch" type="search"
-             placeholder="プロンプト内検索 (空白区切りでAND)"
-             autocomplete="off" size="24" />
+      <div class="prompt-search-wrap">
+        <input id="promptSearch" type="search"
+               placeholder="プロンプト内検索 (空白区切りでAND)"
+               autocomplete="off" spellcheck="false" size="24" />
+        <div id="promptSuggest" class="tag-suggest" hidden role="listbox"></div>
+      </div>
       <button id="promptSearchClear" class="btn-close" title="プロンプト検索クリア">×</button>
       <input id="memoSearch" type="search"
              placeholder="メモ内検索"
