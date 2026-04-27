@@ -29,6 +29,19 @@ class FolderCreate(BaseModel):
     label: str | None = None
 
 
+class FolderUpdate(BaseModel):
+    """登録済みフォルダの編集用ペイロード。
+
+    どのフィールドも省略可能で、送られたものだけ更新する (PATCH セマンティクス)。
+    label に空文字を送るとラベルをクリア (= NULL) する。
+    """
+    path: str | None = None
+    label: str | None = Field(default=None)
+    # label を「明示的に空にしたい」のか「未指定」なのかを区別するため、
+    # クライアント側はラベルを送るときにこのフラグを True にする。
+    label_provided: bool = False
+
+
 class TagAssignRequest(BaseModel):
     image_ids: list[int] = Field(default_factory=list)
     add: list[str] = Field(default_factory=list)
@@ -68,6 +81,8 @@ def list_folders(conn=Depends(get_conn)) -> list[dict[str, Any]]:
             "id": r["id"],
             "path": r["path"],
             "label": r["label"] or Path(r["path"]).name,
+            # 編集ダイアログ用: ユーザーが明示的に入れた生ラベル (未設定なら null)
+            "label_raw": r["label"],
             "added_at": r["added_at"],
             "image_count": cnt,
         })
@@ -100,8 +115,76 @@ def create_folder(body: FolderCreate, conn=Depends(get_conn)) -> dict[str, Any]:
         "id": folder_id,
         "path": row["path"],
         "label": row["label"] or Path(row["path"]).name,
+        "label_raw": row["label"],
         "added_at": row["added_at"],
         "image_count": 0,
+    }
+
+
+@router.patch("/api/folders/{folder_id}")
+def update_folder(
+    folder_id: int, body: FolderUpdate, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    """登録フォルダの label / path を編集する。
+
+    - path を変更した場合は配下 images の path 列も新パス配下に書き換え、
+      watchdog observer も新パスで再起動する (バックグラウンドで再スキャンも実行)。
+    - label のみ変更する場合は表示更新だけで済むので watchdog はそのまま。
+    """
+    current = repo.get_folder(conn, folder_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="フォルダが見つかりません")
+
+    new_path: str | None = None
+    if body.path is not None:
+        p = Path(body.path).expanduser()
+        if not p.exists() or not p.is_dir():
+            raise HTTPException(status_code=400, detail=f"フォルダが存在しません: {p}")
+        new_path = str(p.resolve())
+        # 別 ID で同 path が登録済みなら拒否
+        dup = conn.execute(
+            "SELECT id FROM folders WHERE path = ? AND id != ?",
+            (new_path, folder_id),
+        ).fetchone()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="このフォルダは既に別エントリとして登録済みです")
+
+    new_label: str | None = None
+    if body.label_provided:
+        # 空白だけのラベルは NULL に丸める
+        v = (body.label or "").strip()
+        new_label = v or None
+
+    updated = repo.update_folder(
+        conn,
+        folder_id,
+        new_path=new_path,
+        new_label=new_label,
+        label_provided=body.label_provided,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="フォルダが見つかりません")
+
+    # path が変わったときだけ watchdog を再起動 + バックグラウンド再スキャン
+    if new_path is not None and new_path != current["path"]:
+        scanner.manager.stop_folder(folder_id)
+
+        def _bootstrap() -> None:
+            scanner.full_scan(folder_id, new_path)
+            scanner.manager.start_folder(folder_id, new_path)
+        threading.Thread(target=_bootstrap, daemon=True).start()
+
+    cnt = conn.execute(
+        "SELECT COUNT(*) AS n FROM images WHERE folder_id = ?", (folder_id,)
+    ).fetchone()["n"]
+    return {
+        "id": updated["id"],
+        "path": updated["path"],
+        "label": updated["label"] or Path(updated["path"]).name,
+        "label_raw": updated["label"],
+        "added_at": updated["added_at"],
+        "image_count": cnt,
+        "path_changed": new_path is not None and new_path != current["path"],
     }
 
 

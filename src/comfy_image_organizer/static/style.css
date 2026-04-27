@@ -549,6 +549,18 @@ dialog menu {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 0; margin: 12px 0 0;
 }
+/* フォルダ編集ダイアログのラベル付き入力 */
+#editFolderDialog label {
+  display: block;
+  font-size: 12px;
+  margin-top: 8px;
+  color: var(--fg-dim);
+}
+#editFolderDialog .hint {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-bottom: 8px;
+}
 
 /* ライトボックス (フルスクリーン画像) */
 dialog.lightbox {

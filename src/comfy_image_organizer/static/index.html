@@ -15,6 +15,7 @@
       <select id="folderSelect"></select>
       <button id="btnAddFolder" class="btn-primary" title="フォルダを追加">+ 追加</button>
       <button id="btnRescan" class="btn-sub" title="再スキャン">↻ 再スキャン</button>
+      <button id="btnEditFolder" class="btn-sub" title="このフォルダのパス/ラベルを編集">✎ 編集</button>
       <button id="btnRemoveFolder" class="danger" title="このフォルダを登録解除">解除</button>
     </div>
 
@@ -104,6 +105,24 @@
       <menu>
         <button class="btn-ghost" value="cancel">キャンセル</button>
         <button id="btnAddFolderSubmit" class="btn-primary" value="default">追加</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- フォルダ編集ダイアログ -->
+  <dialog id="editFolderDialog">
+    <form method="dialog">
+      <h3>フォルダを編集</h3>
+      <p class="hint">パスを変更すると、配下画像のレコードのパスも自動で書き換え、新しいパスで再スキャンします。</p>
+      <label>パス
+        <input id="folderEditPathInput" type="text" autocomplete="off" />
+      </label>
+      <label>ラベル
+        <input id="folderEditLabelInput" type="text" placeholder="(空欄でフォルダ名を表示)" autocomplete="off" />
+      </label>
+      <menu>
+        <button class="btn-ghost" value="cancel">キャンセル</button>
+        <button id="btnEditFolderSubmit" class="btn-primary" value="default">保存</button>
       </menu>
     </form>
   </dialog>

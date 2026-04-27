@@ -156,6 +156,41 @@
     };
   }
 
+  async function editCurrentFolder() {
+    if (state.currentFolderId == null) return;
+    const f = state.folders.find(x => x.id === state.currentFolderId);
+    if (!f) return;
+    const dlg = $("#editFolderDialog");
+    $("#folderEditPathInput").value = f.path;
+    // label_raw はユーザーが明示的に入れた生ラベル (null = 未設定)。
+    // フォルダ名フォールバックを編集枠に書き戻すと「保存=フォルダ名で固定」になってしまうので避ける。
+    $("#folderEditLabelInput").value = f.label_raw ?? "";
+    dlg.showModal();
+    dlg.onclose = async () => {
+      if (dlg.returnValue !== "default") return;
+      const newPath = $("#folderEditPathInput").value.trim();
+      const newLabel = $("#folderEditLabelInput").value;
+      const body = { label_provided: true, label: newLabel };
+      if (newPath && newPath !== f.path) body.path = newPath;
+      try {
+        setStatus("フォルダ情報を更新中...");
+        const res = await api(`/api/folders/${state.currentFolderId}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+        await reloadFolders();
+        if (res.path_changed) {
+          setStatus("パスを更新しました (バックグラウンドで再スキャン中)");
+        } else {
+          setStatus("ラベルを更新しました");
+        }
+      } catch (e) {
+        alert("失敗: " + e.message);
+        setStatus("");
+      }
+    };
+  }
+
   async function removeCurrentFolder() {
     if (state.currentFolderId == null) return;
     const f = state.folders.find(x => x.id === state.currentFolderId);
@@ -1201,6 +1236,7 @@
 
     $("#btnAddFolder").onclick = addFolder;
     $("#btnRemoveFolder").onclick = removeCurrentFolder;
+    $("#btnEditFolder").onclick = editCurrentFolder;
     $("#btnRescan").onclick = rescanCurrentFolder;
     $("#btnMove").onclick = openMoveDialog;
 

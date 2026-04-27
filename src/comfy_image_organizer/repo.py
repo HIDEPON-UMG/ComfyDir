@@ -52,6 +52,64 @@ def delete_folder(conn: sqlite3.Connection, folder_id: int) -> int:
     return cur.rowcount
 
 
+def update_folder(
+    conn: sqlite3.Connection,
+    folder_id: int,
+    *,
+    new_path: str | None = None,
+    new_label: str | None = None,
+    label_provided: bool = False,
+) -> sqlite3.Row | None:
+    """登録フォルダの label / path を更新する。
+
+    - new_path が現在の path と異なる場合は、配下 images の path / filename も
+      新パス配下に書き換える (Windows のドライブ文字が入れ替わるケースは未対応)。
+    - label_provided=True のときに限り label を上書き (None なら NULL に戻す)。
+    - 戻り値は更新後の folders 行 (見つからなければ None)。
+    """
+    cur = conn.execute(
+        "SELECT id, path, label FROM folders WHERE id = ?", (folder_id,)
+    ).fetchone()
+    if cur is None:
+        return None
+
+    old_path = cur["path"]
+
+    # path 変更時は配下 images の path 列も追従させる
+    if new_path is not None and new_path != old_path:
+        rows = conn.execute(
+            "SELECT id, path FROM images WHERE folder_id = ?", (folder_id,)
+        ).fetchall()
+        # 末尾セパレータを正規化してから前方一致判定する
+        old_norm = old_path.rstrip("/\\")
+        for r in rows:
+            ip = r["path"]
+            ip_norm = ip
+            # 旧 path 直下のファイルだけを書き換え対象にする
+            if ip == old_norm or ip_norm.startswith(old_norm + "/") or ip_norm.startswith(old_norm + "\\"):
+                rest = ip_norm[len(old_norm):]
+                np = new_path.rstrip("/\\") + rest
+                conn.execute(
+                    "UPDATE images SET path = ?, filename = ? WHERE id = ?",
+                    (np, Path(np).name, r["id"]),
+                )
+        conn.execute(
+            "UPDATE folders SET path = ? WHERE id = ?",
+            (new_path, folder_id),
+        )
+
+    if label_provided:
+        conn.execute(
+            "UPDATE folders SET label = ? WHERE id = ?",
+            (new_label, folder_id),
+        )
+
+    return conn.execute(
+        "SELECT id, path, label, added_at FROM folders WHERE id = ?",
+        (folder_id,),
+    ).fetchone()
+
+
 # ---------- images ----------
 
 def upsert_image(
