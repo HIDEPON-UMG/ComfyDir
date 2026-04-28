@@ -28,6 +28,9 @@
       memoQuery: state.memoQuery,
       helpHidden: state.helpHidden,
       paneOrder: state.paneOrder,
+      favoritesView: state.favoritesView,
+      favoritesCategoryFilter: state.favoritesCategoryFilter,
+      favoritesQuery: state.favoritesQuery,
     };
     try {
       localStorage.setItem(PREF_KEY, JSON.stringify(p));
@@ -55,6 +58,14 @@
     memoQuery: prefs.memoQuery || "",
     helpHidden: !!prefs.helpHidden,
     paneOrder: sanitizePaneOrder(prefs.paneOrder),
+    // ---- お気に入りプロンプト関連 ----
+    favoritesView: !!prefs.favoritesView,
+    favoritesCategoryFilter: prefs.favoritesCategoryFilter ?? "all",
+    favoritesQuery: prefs.favoritesQuery || "",
+    favoriteCategories: [],
+    favorites: [],
+    // 編集ダイアログのコンテキスト (新規 or 編集対象 ID)
+    favoriteEditTarget: null,
   };
 
   // 右ペインのデフォルト並び順 (ファイル名/メタ → Myタグ → メモ → Positive → Negative)
@@ -325,6 +336,12 @@
   function renderRightPane() {
     const pane = $("#rightPane");
     pane.innerHTML = "";
+
+    // お気に入りビュー優先 (画像選択状態とは独立に表示)
+    if (state.favoritesView) {
+      renderFavoritesPane(pane);
+      return;
+    }
 
     if (state.selected.size === 0) {
       pane.innerHTML = `<div class="empty">画像を選択してください</div>`;
@@ -846,7 +863,8 @@
     if (/negative/i.test(title)) {
       pre.classList.add("prompt-negative");
     }
-    wrap.appendChild(pre);
+    // ボタン bar は pre より上 (= セクションヘッダのすぐ下) に置きたいので
+    // wrap への append 順は: bar → pre とする。bar は text が空なら付かない。
 
     if (text) {
       // ボタン群は 1 つの bar にまとめてレイアウト統一
@@ -890,8 +908,19 @@
 
       bar.appendChild(sortBtn);
       bar.appendChild(undoBtn);
+
+      // ★ お気に入りに追加: 現在の Positive + Negative をペアで保存
+      const favBtn = document.createElement("button");
+      favBtn.className = "fav-add-btn btn-sub";
+      favBtn.textContent = "★ お気に入りに追加";
+      favBtn.title = "Positive と Negative をペアで保存";
+      favBtn.onclick = () => openFavoriteEditDialogForCurrent();
+      bar.appendChild(favBtn);
+
+      // ボタン行を pre より先に置く (セクションタイトルとプロンプト本文の間に表示)
       wrap.appendChild(bar);
     }
+    wrap.appendChild(pre);
     return wrap;
   }
 
@@ -1240,6 +1269,24 @@
     $("#btnRescan").onclick = rescanCurrentFolder;
     $("#btnMove").onclick = openMoveDialog;
 
+    // お気に入りプロンプト: トップバーのトグル
+    const favToggleBtn = $("#btnFavoritesToggle");
+    if (favToggleBtn) {
+      // 永続化された状態を反映
+      reflectFavoritesToggle();
+      favToggleBtn.onclick = async () => {
+        state.favoritesView = !state.favoritesView;
+        savePrefs();
+        reflectFavoritesToggle();
+        if (state.favoritesView) {
+          await reloadFavoriteCategoriesAndItems();
+        }
+        renderRightPane();
+      };
+    }
+    setupFavoriteEditDialog();
+    setupCategoryManageDialog();
+
     $("#folderSelect").onchange = (e) => {
       state.currentFolderId = parseInt(e.target.value, 10);
       state.selected.clear();
@@ -1546,6 +1593,571 @@
     // Danbooru CSV カテゴリは並べ替え機能でしか使わないので、メイン UI ロードを止めず後追いで取得
     loadPromptDanbooruCategoryMap();
     startEventStream();
+    // お気に入りビューが永続化で ON になっていたら、最初に一度ロードして描画
+    if (state.favoritesView) {
+      try {
+        await reloadFavoriteCategoriesAndItems();
+        renderRightPane();
+      } catch (e) {
+        setStatus("お気に入り読み込み失敗: " + e.message);
+      }
+    }
+  }
+
+  // ============================================================
+  // お気に入りプロンプト
+  // ------------------------------------------------------------
+  // - 右ペインを「画像詳細表示」と「お気に入り表示」で排他切替
+  // - Positive / Negative はペアで 1 レコードに保存
+  // - カテゴリは自由ラベル (新規入力 or 既存選択)
+  // ============================================================
+
+  function reflectFavoritesToggle() {
+    const btn = $("#btnFavoritesToggle");
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", state.favoritesView ? "true" : "false");
+    btn.classList.toggle("is-active", !!state.favoritesView);
+  }
+
+  async function reloadFavoriteCategories() {
+    state.favoriteCategories = await api("/api/favorite-prompt-categories");
+  }
+
+  async function reloadFavorites() {
+    const params = new URLSearchParams();
+    params.set("category_id", String(state.favoritesCategoryFilter));
+    if (state.favoritesQuery) params.set("q", state.favoritesQuery);
+    state.favorites = await api(`/api/favorite-prompts?${params.toString()}`);
+  }
+
+  async function reloadFavoriteCategoriesAndItems() {
+    await Promise.all([reloadFavoriteCategories(), reloadFavorites()]);
+  }
+
+  function renderFavoritesPane(pane) {
+    pane.innerHTML = "";
+    const wrap = document.createElement("div");
+    wrap.className = "fav-pane";
+
+    // ヘッダ: タイトルのみ (各種ボタンは下のコントロール行に集約)
+    const header = document.createElement("div");
+    header.className = "fav-pane-header";
+    header.innerHTML = `<h3>★ お気に入りプロンプト</h3>`;
+    wrap.appendChild(header);
+
+    // 各種ボタン行 (検索 / ＋新規 / ⚙カテゴリ管理) — カテゴリタブの「上」に集約
+    const ctl = document.createElement("div");
+    ctl.className = "fav-ctl-row";
+    ctl.innerHTML = `
+      <input type="search" class="fav-search" placeholder="検索 (空白区切りで AND)"
+             autocomplete="off" />
+      <button class="btn-close fav-search-clear" title="検索クリア">×</button>
+      <button class="btn-primary fav-new" title="お気に入りを新規作成 (空のまま開始)">＋ 新規</button>
+      <button class="btn-sub fav-manage-categories" title="カテゴリの追加・リネーム・削除">⚙ カテゴリ管理</button>
+    `;
+    const searchInput = ctl.querySelector(".fav-search");
+    searchInput.value = state.favoritesQuery || "";
+    let searchTimer = null;
+    searchInput.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(async () => {
+        state.favoritesQuery = searchInput.value.trim();
+        savePrefs();
+        try {
+          await reloadFavorites();
+          renderRightPane();
+          // 入力中フォーカスを保てるよう再描画後にフォーカスを戻す
+          const again = $(".fav-search");
+          if (again) {
+            again.focus();
+            again.setSelectionRange(again.value.length, again.value.length);
+          }
+        } catch (e) { setStatus("検索失敗: " + e.message); }
+      }, 250);
+    });
+    ctl.querySelector(".fav-search-clear").onclick = () => {
+      if (!searchInput.value) return;
+      searchInput.value = "";
+      state.favoritesQuery = "";
+      savePrefs();
+      reloadFavorites().then(() => renderRightPane());
+    };
+    ctl.querySelector(".fav-new").onclick = () => openFavoriteEditDialogNew();
+    ctl.querySelector(".fav-manage-categories").onclick = openCategoryManageDialog;
+    wrap.appendChild(ctl);
+
+    // カテゴリタブ
+    const tabs = document.createElement("div");
+    tabs.className = "fav-tabs";
+    const tabDefs = [
+      { value: "all", label: "すべて" },
+      { value: "uncategorized", label: "未分類" },
+      ...state.favoriteCategories.map(c => ({
+        value: String(c.id), label: c.name, count: c.item_count,
+      })),
+    ];
+    for (const t of tabDefs) {
+      const b = document.createElement("button");
+      b.className = "fav-tab";
+      b.type = "button";
+      const cur = String(state.favoritesCategoryFilter);
+      if (cur === t.value) b.classList.add("is-active");
+      b.textContent = t.count !== undefined ? `${t.label} (${t.count})` : t.label;
+      b.dataset.value = t.value;
+      b.onclick = async () => {
+        // "all" / "uncategorized" は文字列のまま、数値は Number 化
+        if (t.value === "all" || t.value === "uncategorized") {
+          state.favoritesCategoryFilter = t.value;
+        } else {
+          state.favoritesCategoryFilter = Number(t.value);
+        }
+        savePrefs();
+        await reloadFavorites();
+        renderRightPane();
+      };
+      tabs.appendChild(b);
+    }
+    wrap.appendChild(tabs);
+
+    // 一覧
+    const list = document.createElement("div");
+    list.className = "fav-list";
+    if (state.favorites.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "お気に入りはまだありません。"
+        + "画像を選んで右ペインの「★ お気に入りに追加」、または上の「＋ 新規」から登録できます。";
+      list.appendChild(empty);
+    } else {
+      for (const f of state.favorites) {
+        list.appendChild(buildFavoriteCard(f));
+      }
+    }
+    wrap.appendChild(list);
+
+    pane.appendChild(wrap);
+  }
+
+  function buildFavoriteCard(f) {
+    const card = document.createElement("div");
+    card.className = "fav-card";
+
+    const head = document.createElement("div");
+    head.className = "fav-card-head";
+    head.innerHTML = `
+      <span class="fav-card-name"></span>
+      <span class="fav-card-cat"></span>
+    `;
+    head.querySelector(".fav-card-name").textContent = f.name;
+    const catLabel = f.category_id == null ? "(未分類)" : f.category_name || "(カテゴリ不明)";
+    head.querySelector(".fav-card-cat").textContent = catLabel;
+    card.appendChild(head);
+
+    const meta = (text, className) => {
+      const div = document.createElement("div");
+      div.className = className;
+      div.textContent = text || "";
+      return div;
+    };
+
+    if (f.positive) {
+      const p = meta(f.positive, "fav-card-positive");
+      card.appendChild(p);
+    }
+    if (f.negative) {
+      const n = meta(f.negative, "fav-card-negative");
+      card.appendChild(n);
+    }
+    if (f.memo) {
+      const m = meta(f.memo, "fav-card-memo");
+      card.appendChild(m);
+    }
+
+    // ボタン群
+    const bar = document.createElement("div");
+    bar.className = "fav-card-actions";
+
+    const copyPosBtn = document.createElement("button");
+    copyPosBtn.className = "btn-sub";
+    copyPosBtn.textContent = "📋 Pos";
+    copyPosBtn.title = "Positive をクリップボードにコピー";
+    copyPosBtn.disabled = !f.positive;
+    copyPosBtn.onclick = async () => {
+      await navigator.clipboard.writeText(f.positive || "");
+      setStatus(`Positive をコピー: ${f.name}`);
+    };
+    bar.appendChild(copyPosBtn);
+
+    const copyNegBtn = document.createElement("button");
+    copyNegBtn.className = "btn-sub";
+    copyNegBtn.textContent = "📋 Neg";
+    copyNegBtn.title = "Negative をクリップボードにコピー";
+    copyNegBtn.disabled = !f.negative;
+    copyNegBtn.onclick = async () => {
+      await navigator.clipboard.writeText(f.negative || "");
+      setStatus(`Negative をコピー: ${f.name}`);
+    };
+    bar.appendChild(copyNegBtn);
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-sub";
+    editBtn.textContent = "✎ 編集";
+    editBtn.onclick = () => openFavoriteEditDialogForExisting(f);
+    bar.appendChild(editBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "danger";
+    delBtn.textContent = "🗑";
+    delBtn.title = "削除";
+    delBtn.onclick = async () => {
+      if (!confirm(`お気に入り「${f.name}」を削除しますか？`)) return;
+      try {
+        await api(`/api/favorite-prompts/${f.id}`, { method: "DELETE" });
+        setStatus(`削除: ${f.name}`);
+        await reloadFavoriteCategoriesAndItems();
+        renderRightPane();
+      } catch (e) {
+        alert("削除失敗: " + e.message);
+      }
+    };
+    bar.appendChild(delBtn);
+
+    card.appendChild(bar);
+    return card;
+  }
+
+  // 編集ダイアログ: 中身を初期化して開く -------------------------------
+
+  function fillCategorySelect(selectEl, currentId) {
+    selectEl.innerHTML = "";
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(未分類)";
+    selectEl.appendChild(optNone);
+    for (const c of state.favoriteCategories) {
+      const o = document.createElement("option");
+      o.value = String(c.id);
+      o.textContent = c.name;
+      selectEl.appendChild(o);
+    }
+    selectEl.value = currentId == null ? "" : String(currentId);
+  }
+
+  async function openFavoriteEditDialogForCurrent() {
+    // 現在画像 (state.detail) からプリセット
+    if (!state.detail) {
+      alert("画像が選択されていません");
+      return;
+    }
+    if (state.favoriteCategories.length === 0) {
+      try { await reloadFavoriteCategories(); } catch {}
+    }
+    const dlg = $("#favoriteEditDialog");
+    state.favoriteEditTarget = null;  // 新規モード
+    $("#favoriteEditTitle").textContent = "★ お気に入りに追加";
+    $("#favoriteEditName").value = state.detail.filename
+      ? state.detail.filename.replace(/\.[^.]+$/, "")
+      : "";
+    fillCategorySelect($("#favoriteEditCategory"), null);
+    $("#favoriteEditCategoryNew").value = "";
+    $("#favoriteEditPositive").value = state.detail.positive_prompt || "";
+    $("#favoriteEditNegative").value = state.detail.negative_prompt || "";
+    $("#favoriteEditMemo").value = "";
+    dlg.dataset.sourceImageId = String(state.detail.id || "");
+    resetFavEditPromptButtons();
+    dlg.showModal();
+    setTimeout(() => $("#favoriteEditName").focus(), 0);
+  }
+
+  async function openFavoriteEditDialogNew() {
+    if (state.favoriteCategories.length === 0) {
+      try { await reloadFavoriteCategories(); } catch {}
+    }
+    const dlg = $("#favoriteEditDialog");
+    state.favoriteEditTarget = null;
+    $("#favoriteEditTitle").textContent = "★ お気に入りを新規作成";
+    $("#favoriteEditName").value = "";
+    // 直近選択中のカテゴリタブを初期値にする (整数なら)
+    const initCat = typeof state.favoritesCategoryFilter === "number"
+      ? state.favoritesCategoryFilter : null;
+    fillCategorySelect($("#favoriteEditCategory"), initCat);
+    $("#favoriteEditCategoryNew").value = "";
+    $("#favoriteEditPositive").value = "";
+    $("#favoriteEditNegative").value = "";
+    $("#favoriteEditMemo").value = "";
+    dlg.dataset.sourceImageId = "";
+    resetFavEditPromptButtons();
+    dlg.showModal();
+    setTimeout(() => $("#favoriteEditName").focus(), 0);
+  }
+
+  async function openFavoriteEditDialogForExisting(fav) {
+    if (state.favoriteCategories.length === 0) {
+      try { await reloadFavoriteCategories(); } catch {}
+    }
+    const dlg = $("#favoriteEditDialog");
+    state.favoriteEditTarget = fav.id;
+    $("#favoriteEditTitle").textContent = `✎ 編集: ${fav.name}`;
+    $("#favoriteEditName").value = fav.name;
+    fillCategorySelect($("#favoriteEditCategory"), fav.category_id);
+    $("#favoriteEditCategoryNew").value = "";
+    $("#favoriteEditPositive").value = fav.positive || "";
+    $("#favoriteEditNegative").value = fav.negative || "";
+    $("#favoriteEditMemo").value = fav.memo || "";
+    dlg.dataset.sourceImageId = fav.source_image_id ? String(fav.source_image_id) : "";
+    resetFavEditPromptButtons();
+    dlg.showModal();
+    setTimeout(() => $("#favoriteEditName").focus(), 0);
+  }
+
+  // ダイアログ内 textarea 用の {コピー/並べ替え/戻る} ボタン制御。
+  // promptBlockBody (read-only pre) と違い、ここは編集可能 textarea が対象。
+  // 並び替え時に直前の value を backup し、「戻る」で復元する。
+  // ダイアログ再オープン時は resetButtonStates() で undo 不可に戻す。
+  const _favEditUndoBackup = { positive: null, negative: null };
+
+  function attachFavEditPromptButtons(kind /* 'positive' | 'negative' */, label) {
+    const ta = $(kind === "positive" ? "#favoriteEditPositive" : "#favoriteEditNegative");
+    const copyBtn = $(kind === "positive" ? "#favEditPosCopy" : "#favEditNegCopy");
+    const sortBtn = $(kind === "positive" ? "#favEditPosSort" : "#favEditNegSort");
+    const undoBtn = $(kind === "positive" ? "#favEditPosUndo" : "#favEditNegUndo");
+    if (!ta || !copyBtn || !sortBtn || !undoBtn) return;
+
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(ta.value || "");
+        setStatus(`${label} をクリップボードにコピーしました`);
+      } catch (e) {
+        setStatus("コピー失敗: " + e.message);
+      }
+    };
+    sortBtn.onclick = () => {
+      const cur = ta.value || "";
+      const sorted = sortPromptText(cur);
+      if (!sorted || sorted === cur) return;
+      _favEditUndoBackup[kind] = cur;
+      ta.value = sorted;
+      undoBtn.disabled = false;
+      sortBtn.disabled = true;
+    };
+    undoBtn.onclick = () => {
+      const backup = _favEditUndoBackup[kind];
+      if (backup == null) return;
+      ta.value = backup;
+      _favEditUndoBackup[kind] = null;
+      undoBtn.disabled = true;
+      sortBtn.disabled = false;
+    };
+  }
+
+  function resetFavEditPromptButtons() {
+    _favEditUndoBackup.positive = null;
+    _favEditUndoBackup.negative = null;
+    for (const id of ["#favEditPosUndo", "#favEditNegUndo"]) {
+      const b = $(id); if (b) b.disabled = true;
+    }
+    for (const id of ["#favEditPosSort", "#favEditNegSort"]) {
+      const b = $(id); if (b) b.disabled = false;
+    }
+  }
+
+  function setupFavoriteEditDialog() {
+    const dlg = $("#favoriteEditDialog");
+    if (!dlg) return;
+    attachFavEditPromptButtons("positive", "Positive Prompt");
+    attachFavEditPromptButtons("negative", "Negative Prompt");
+    const submit = $("#btnFavoriteEditSubmit");
+    submit.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const name = $("#favoriteEditName").value.trim();
+      if (!name) {
+        alert("名前は必須です");
+        return;
+      }
+      const positive = $("#favoriteEditPositive").value;
+      const negative = $("#favoriteEditNegative").value;
+      const memo = $("#favoriteEditMemo").value;
+
+      // カテゴリ: 新規欄が優先 (空白除去後に値があれば新規作成)
+      const newCatName = $("#favoriteEditCategoryNew").value.trim();
+      let categoryId = null;
+      if (newCatName) {
+        try {
+          const created = await api("/api/favorite-prompt-categories", {
+            method: "POST",
+            body: JSON.stringify({ name: newCatName }),
+          });
+          categoryId = created.id;
+          // 候補リストを最新化
+          await reloadFavoriteCategories();
+        } catch (e) {
+          alert("カテゴリ作成失敗: " + e.message);
+          return;
+        }
+      } else {
+        const sel = $("#favoriteEditCategory").value;
+        categoryId = sel === "" ? null : Number(sel);
+      }
+
+      const sourceImageIdStr = dlg.dataset.sourceImageId || "";
+      const sourceImageId = sourceImageIdStr ? Number(sourceImageIdStr) : null;
+
+      try {
+        if (state.favoriteEditTarget == null) {
+          // 新規
+          await api("/api/favorite-prompts", {
+            method: "POST",
+            body: JSON.stringify({
+              name,
+              category_id: categoryId,
+              positive,
+              negative,
+              memo,
+              source_image_id: sourceImageId,
+            }),
+          });
+          setStatus(`お気に入り追加: ${name}`);
+        } else {
+          // 編集
+          await api(`/api/favorite-prompts/${state.favoriteEditTarget}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              name,
+              category_id: categoryId,  // null は未分類化として送る
+              positive,
+              negative,
+              memo,
+            }),
+          });
+          setStatus(`お気に入り更新: ${name}`);
+        }
+        dlg.close();
+        await reloadFavoriteCategoriesAndItems();
+        // お気に入りビュー以外でも、追加直後に内部状態だけ更新しておく
+        if (state.favoritesView) renderRightPane();
+      } catch (e) {
+        alert("保存失敗: " + e.message);
+      }
+    });
+  }
+
+  // カテゴリ管理ダイアログ -------------------------------------------------
+
+  function setupCategoryManageDialog() {
+    const dlg = $("#categoryManageDialog");
+    if (!dlg) return;
+    $("#btnCategoryAdd").onclick = async () => {
+      const name = $("#categoryAddName").value.trim();
+      if (!name) {
+        alert("カテゴリ名を入力してください");
+        return;
+      }
+      try {
+        await api("/api/favorite-prompt-categories", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+        });
+        $("#categoryAddName").value = "";
+        await reloadFavoriteCategoriesAndItems();
+        renderCategoryManageList();
+      } catch (e) {
+        alert("追加失敗: " + e.message);
+      }
+    };
+  }
+
+  async function openCategoryManageDialog() {
+    const dlg = $("#categoryManageDialog");
+    if (!dlg) return;
+    try { await reloadFavoriteCategories(); } catch {}
+    renderCategoryManageList();
+    $("#categoryAddName").value = "";
+    dlg.showModal();
+    // 閉じたら一覧を再描画 (件数表示などが変わる可能性があるため)
+    const onClose = () => {
+      dlg.removeEventListener("close", onClose);
+      reloadFavoriteCategoriesAndItems().then(() => {
+        if (state.favoritesView) renderRightPane();
+      });
+    };
+    dlg.addEventListener("close", onClose);
+  }
+
+  function renderCategoryManageList() {
+    const list = $("#categoryManageList");
+    if (!list) return;
+    list.innerHTML = "";
+    if (state.favoriteCategories.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "カテゴリはまだありません。";
+      list.appendChild(li);
+      return;
+    }
+    for (const c of state.favoriteCategories) {
+      const li = document.createElement("li");
+      li.className = "category-manage-item";
+
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.value = c.name;
+      nameInput.className = "category-manage-name";
+      nameInput.maxLength = 60;
+      li.appendChild(nameInput);
+
+      const cnt = document.createElement("span");
+      cnt.className = "category-manage-count";
+      cnt.textContent = `${c.item_count} 件`;
+      li.appendChild(cnt);
+
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "btn-primary";
+      saveBtn.textContent = "保存";
+      saveBtn.onclick = async () => {
+        const v = nameInput.value.trim();
+        if (!v || v === c.name) return;
+        try {
+          await api(`/api/favorite-prompt-categories/${c.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ name: v }),
+          });
+          setStatus(`カテゴリ更新: ${c.name} → ${v}`);
+          await reloadFavoriteCategoriesAndItems();
+          renderCategoryManageList();
+        } catch (e) {
+          alert("リネーム失敗: " + e.message);
+        }
+      };
+      li.appendChild(saveBtn);
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "danger";
+      delBtn.textContent = "削除";
+      delBtn.title = "カテゴリを削除（中のお気に入りは未分類になる）";
+      delBtn.onclick = async () => {
+        const msg = c.item_count > 0
+          ? `カテゴリ「${c.name}」を削除しますか？配下の ${c.item_count} 件は「未分類」に戻ります。`
+          : `カテゴリ「${c.name}」を削除しますか？`;
+        if (!confirm(msg)) return;
+        try {
+          await api(`/api/favorite-prompt-categories/${c.id}`, { method: "DELETE" });
+          // 削除したカテゴリを選択中だった場合は "all" に戻す
+          if (state.favoritesCategoryFilter === c.id) {
+            state.favoritesCategoryFilter = "all";
+            savePrefs();
+          }
+          await reloadFavoriteCategoriesAndItems();
+          renderCategoryManageList();
+        } catch (e) {
+          alert("削除失敗: " + e.message);
+        }
+      };
+      li.appendChild(delBtn);
+
+      list.appendChild(li);
+    }
   }
 
   document.addEventListener("DOMContentLoaded", init);

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import scanner
-from .config import LOG_PATH, STATIC_DIR
+from .config import ICON_PATH, LOG_PATH, STATIC_DIR
 from .db import connect, init_schema
 from .routes import router
 
@@ -76,3 +76,9 @@ app.include_router(router)
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    """ブラウザのタブに表示されるアイコン (assets/app.ico を流用)。"""
+    return FileResponse(ICON_PATH, media_type="image/x-icon")

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>ComfyDir</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -52,6 +53,13 @@
              placeholder="メモ内検索"
              autocomplete="off" size="16" />
       <button id="memoSearchClear" class="btn-close" title="メモ検索クリア">×</button>
+    </div>
+
+    <div class="ctl">
+      <button id="btnFavoritesToggle" class="btn-sub btn-fav-toggle"
+              title="お気に入りプロンプトの一覧を右ペインに表示" aria-pressed="false">
+        ★ お気に入り
+      </button>
     </div>
 
     <div class="ctl status" id="statusBar"></div>
@@ -153,6 +161,81 @@
       <menu>
         <button class="btn-ghost" value="cancel">キャンセル</button>
         <button id="btnMoveSubmit" class="btn-primary" value="default">移動</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- お気に入りプロンプト 編集ダイアログ (新規・編集兼用) -->
+  <dialog id="favoriteEditDialog" class="favorite-dialog">
+    <form method="dialog">
+      <h3 id="favoriteEditTitle">お気に入りに追加</h3>
+
+      <label>名前
+        <input id="favoriteEditName" type="text" autocomplete="off" required maxlength="120" />
+      </label>
+
+      <label>カテゴリ
+        <div class="favorite-category-row">
+          <select id="favoriteEditCategory">
+            <option value="">(未分類)</option>
+          </select>
+          <input id="favoriteEditCategoryNew" type="text" placeholder="(または新規カテゴリ名)"
+                 autocomplete="off" maxlength="60" />
+        </div>
+        <span class="hint">既存カテゴリを選ぶか、右の欄に名前を入れて新規作成できます。</span>
+      </label>
+
+      <label>Positive プロンプト
+        <div class="prompt-btn-bar fav-edit-btn-bar">
+          <button type="button" id="favEditPosCopy" class="copy-btn btn-sub"
+                  title="現在のテキストをクリップボードへ">コピー</button>
+          <button type="button" id="favEditPosSort" class="sort-btn btn-sub"
+                  title="カテゴリ別に並び替え">並べ替え</button>
+          <button type="button" id="favEditPosUndo" class="undo-btn btn-sub"
+                  title="並び替え前の値に戻す" disabled>戻る</button>
+        </div>
+        <textarea id="favoriteEditPositive" rows="6" spellcheck="false"></textarea>
+      </label>
+
+      <label>Negative プロンプト
+        <div class="prompt-btn-bar fav-edit-btn-bar">
+          <button type="button" id="favEditNegCopy" class="copy-btn btn-sub"
+                  title="現在のテキストをクリップボードへ">コピー</button>
+          <button type="button" id="favEditNegSort" class="sort-btn btn-sub"
+                  title="カテゴリ別に並び替え">並べ替え</button>
+          <button type="button" id="favEditNegUndo" class="undo-btn btn-sub"
+                  title="並び替え前の値に戻す" disabled>戻る</button>
+        </div>
+        <textarea id="favoriteEditNegative" rows="4" spellcheck="false"></textarea>
+      </label>
+
+      <label>メモ (任意)
+        <textarea id="favoriteEditMemo" rows="2"></textarea>
+      </label>
+
+      <menu>
+        <button class="btn-ghost" value="cancel">キャンセル</button>
+        <button id="btnFavoriteEditSubmit" class="btn-primary" value="default">保存</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- カテゴリ管理ダイアログ -->
+  <dialog id="categoryManageDialog" class="favorite-dialog">
+    <form method="dialog">
+      <h3>カテゴリを管理</h3>
+      <p class="hint">カテゴリを削除すると、配下のお気に入りは「未分類」に戻ります（中身は消えません）。</p>
+
+      <ul id="categoryManageList" class="category-manage-list"></ul>
+
+      <fieldset class="category-add">
+        <legend>新規カテゴリを追加</legend>
+        <input id="categoryAddName" type="text" placeholder="カテゴリ名" autocomplete="off" maxlength="60" />
+        <button id="btnCategoryAdd" class="btn-primary" type="button">＋ 追加</button>
+      </fieldset>
+
+      <menu>
+        <button class="btn-ghost" value="cancel">閉じる</button>
       </menu>
     </form>
   </dialog>

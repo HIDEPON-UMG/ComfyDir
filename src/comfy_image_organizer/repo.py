@@ -850,3 +850,270 @@ def get_prompt_category_map() -> dict[str, list[str]]:
                 continue
             out.setdefault(cat, []).append(key)
         return out
+
+
+# ---------- favorite prompts (お気に入りプロンプト) ----------
+# positive / negative をペアで 1 レコードに保持する。
+# category_id は NULL 可（未分類）。category 削除時は SET NULL で残る。
+
+# 値が「未指定」（更新しない）であることを示すためのセンチネル。
+# None は「明示的に NULL にする」意図（カテゴリ解除など）と区別する必要がある。
+_UNSET = object()
+
+
+def list_prompt_categories(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """カテゴリ一覧（各カテゴリ内のお気に入り件数付き）を返す。
+
+    ORDER は sort_order 昇順 → 同値なら name 昇順。
+    """
+    return conn.execute(
+        """
+        SELECT c.id, c.name, c.sort_order, c.created_at,
+               COUNT(f.id) AS item_count
+        FROM prompt_categories c
+        LEFT JOIN favorite_prompts f ON f.category_id = c.id
+        GROUP BY c.id, c.name, c.sort_order, c.created_at
+        ORDER BY c.sort_order ASC, c.name COLLATE NOCASE ASC
+        """
+    ).fetchall()
+
+
+def get_prompt_category(
+    conn: sqlite3.Connection, category_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT id, name, sort_order, created_at FROM prompt_categories WHERE id = ?",
+        (category_id,),
+    ).fetchone()
+
+
+def create_prompt_category(
+    conn: sqlite3.Connection, name: str
+) -> sqlite3.Row:
+    """カテゴリを新規作成する。同名は UNIQUE 制約で弾かれる（呼び出し側で 409 化）。"""
+    name = name.strip()
+    if not name:
+        raise ValueError("カテゴリ名が空です")
+    now = time.time()
+    # sort_order の初期値は既存最大 + 1（末尾に並べる）
+    last = conn.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) AS m FROM prompt_categories"
+    ).fetchone()
+    next_order = int(last["m"]) + 1
+    cur = conn.execute(
+        "INSERT INTO prompt_categories (name, sort_order, created_at) VALUES (?, ?, ?)",
+        (name, next_order, now),
+    )
+    return conn.execute(
+        "SELECT id, name, sort_order, created_at FROM prompt_categories WHERE id = ?",
+        (cur.lastrowid,),
+    ).fetchone()
+
+
+def update_prompt_category(
+    conn: sqlite3.Connection,
+    category_id: int,
+    *,
+    new_name: str | None = None,
+    new_sort_order: int | None = None,
+) -> sqlite3.Row | None:
+    """カテゴリのリネーム / 並び替え。指定されたフィールドだけ更新する。"""
+    cur = get_prompt_category(conn, category_id)
+    if cur is None:
+        return None
+    if new_name is not None:
+        n = new_name.strip()
+        if not n:
+            raise ValueError("カテゴリ名が空です")
+        conn.execute(
+            "UPDATE prompt_categories SET name = ? WHERE id = ?", (n, category_id)
+        )
+    if new_sort_order is not None:
+        conn.execute(
+            "UPDATE prompt_categories SET sort_order = ? WHERE id = ?",
+            (int(new_sort_order), category_id),
+        )
+    return get_prompt_category(conn, category_id)
+
+
+def delete_prompt_category(
+    conn: sqlite3.Connection, category_id: int
+) -> int:
+    """カテゴリを削除する。配下の favorite_prompts は ON DELETE SET NULL で未分類になる。"""
+    cur = conn.execute(
+        "DELETE FROM prompt_categories WHERE id = ?", (category_id,)
+    )
+    return cur.rowcount
+
+
+def list_favorite_prompts(
+    conn: sqlite3.Connection,
+    *,
+    category_filter: Any = "all",  # "all" | "uncategorized" | int(category_id)
+    q: str | None = None,
+) -> list[sqlite3.Row]:
+    """お気に入り一覧を返す。
+
+    - category_filter:
+        "all"           : すべて
+        "uncategorized" : category_id IS NULL のみ
+        int             : 指定カテゴリ ID のみ
+    - q: 空白区切りで AND 検索。各語が name / positive / negative / memo のいずれかに含まれること。
+    """
+    where: list[str] = []
+    params: list[Any] = []
+
+    if category_filter == "uncategorized":
+        where.append("f.category_id IS NULL")
+    elif isinstance(category_filter, int):
+        where.append("f.category_id = ?")
+        params.append(category_filter)
+    # "all" のときは絞り込みなし
+
+    if q:
+        terms = [t for t in q.split() if t]
+        for term in terms:
+            where.append(
+                "(LOWER(f.name) LIKE ? "
+                "OR LOWER(f.positive) LIKE ? "
+                "OR LOWER(f.negative) LIKE ? "
+                "OR LOWER(f.memo) LIKE ?)"
+            )
+            like = f"%{term.lower()}%"
+            params.extend([like, like, like, like])
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    sql = (
+        "SELECT f.id, f.name, f.category_id, f.positive, f.negative, f.memo, "
+        "       f.source_image_id, f.sort_order, f.created_at, f.updated_at, "
+        "       c.name AS category_name "
+        "FROM favorite_prompts f "
+        "LEFT JOIN prompt_categories c ON c.id = f.category_id "
+        f"{where_sql} "
+        "ORDER BY f.sort_order ASC, f.updated_at DESC, f.id DESC"
+    )
+    return conn.execute(sql, params).fetchall()
+
+
+def get_favorite_prompt(
+    conn: sqlite3.Connection, fav_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT f.id, f.name, f.category_id, f.positive, f.negative, f.memo,
+               f.source_image_id, f.sort_order, f.created_at, f.updated_at,
+               c.name AS category_name
+        FROM favorite_prompts f
+        LEFT JOIN prompt_categories c ON c.id = f.category_id
+        WHERE f.id = ?
+        """,
+        (fav_id,),
+    ).fetchone()
+
+
+def create_favorite_prompt(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    category_id: int | None,
+    positive: str,
+    negative: str,
+    memo: str,
+    source_image_id: int | None,
+) -> sqlite3.Row:
+    """お気に入りプロンプトを新規作成する。"""
+    name = name.strip()
+    if not name:
+        raise ValueError("名前が空です")
+    if category_id is not None and get_prompt_category(conn, category_id) is None:
+        raise ValueError(f"カテゴリが存在しません: id={category_id}")
+    now = time.time()
+    last = conn.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) AS m FROM favorite_prompts"
+    ).fetchone()
+    next_order = int(last["m"]) + 1
+    cur = conn.execute(
+        """
+        INSERT INTO favorite_prompts (
+          name, category_id, positive, negative, memo,
+          source_image_id, sort_order, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            name, category_id, positive or "", negative or "", memo or "",
+            source_image_id, next_order, now, now,
+        ),
+    )
+    row = get_favorite_prompt(conn, int(cur.lastrowid))
+    assert row is not None
+    return row
+
+
+def update_favorite_prompt(
+    conn: sqlite3.Connection,
+    fav_id: int,
+    *,
+    name: Any = _UNSET,            # str
+    category_id: Any = _UNSET,     # int | None  (None は「未分類化」)
+    positive: Any = _UNSET,        # str
+    negative: Any = _UNSET,        # str
+    memo: Any = _UNSET,            # str
+) -> sqlite3.Row | None:
+    """部分更新。_UNSET のフィールドは更新しない。
+
+    category_id に None を渡すと「カテゴリ解除（未分類）」になる。
+    """
+    if get_favorite_prompt(conn, fav_id) is None:
+        return None
+
+    sets: list[str] = []
+    params: list[Any] = []
+
+    if name is not _UNSET:
+        n = (name or "").strip()
+        if not n:
+            raise ValueError("名前が空です")
+        sets.append("name = ?")
+        params.append(n)
+
+    if category_id is not _UNSET:
+        if category_id is not None:
+            if get_prompt_category(conn, int(category_id)) is None:
+                raise ValueError(f"カテゴリが存在しません: id={category_id}")
+            sets.append("category_id = ?")
+            params.append(int(category_id))
+        else:
+            sets.append("category_id = NULL")
+
+    if positive is not _UNSET:
+        sets.append("positive = ?")
+        params.append(positive or "")
+
+    if negative is not _UNSET:
+        sets.append("negative = ?")
+        params.append(negative or "")
+
+    if memo is not _UNSET:
+        sets.append("memo = ?")
+        params.append(memo or "")
+
+    if not sets:
+        # 何も更新しないが updated_at だけ更新するのは過剰なので、現状を返して終わり
+        return get_favorite_prompt(conn, fav_id)
+
+    sets.append("updated_at = ?")
+    params.append(time.time())
+    params.append(fav_id)
+
+    conn.execute(
+        f"UPDATE favorite_prompts SET {', '.join(sets)} WHERE id = ?",
+        params,
+    )
+    return get_favorite_prompt(conn, fav_id)
+
+
+def delete_favorite_prompt(
+    conn: sqlite3.Connection, fav_id: int
+) -> int:
+    cur = conn.execute("DELETE FROM favorite_prompts WHERE id = ?", (fav_id,))
+    return cur.rowcount

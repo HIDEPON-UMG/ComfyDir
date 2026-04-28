@@ -14,6 +14,9 @@ DB_PATH = DATA_DIR / "index.sqlite"
 THUMB_DIR = DATA_DIR / "thumbs"
 LOG_PATH = DATA_DIR / "server.log"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# アプリアイコン (タスクバー / ブラウザ favicon 共用 / マルチサイズ ICO)
+ASSETS_DIR = ROOT_DIR / "assets"
+ICON_PATH = ASSETS_DIR / "app.ico"
 # プロンプトオートコンプリートで参照する Danbooru 風 CSV (a1111-tagcomplete 互換)
 # このフォルダの *.csv が起動時に全部マージされる
 DANBOORU_TAG_DIR = DATA_DIR / "danbooru_tags"

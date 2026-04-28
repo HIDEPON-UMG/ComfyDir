@@ -49,6 +49,32 @@ CREATE TABLE IF NOT EXISTS image_tags (
   FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
   FOREIGN KEY (tag_id)   REFERENCES tags(id)   ON DELETE CASCADE
 );
+
+-- お気に入りプロンプトのカテゴリ（ユーザー定義の自由ラベル）
+CREATE TABLE IF NOT EXISTS prompt_categories (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT    NOT NULL UNIQUE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  REAL    NOT NULL
+);
+
+-- お気に入りプロンプト本体（positive / negative をペアで 1 レコード）
+CREATE TABLE IF NOT EXISTS favorite_prompts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  name            TEXT    NOT NULL,
+  category_id     INTEGER,
+  positive        TEXT    NOT NULL DEFAULT '',
+  negative        TEXT    NOT NULL DEFAULT '',
+  memo            TEXT    NOT NULL DEFAULT '',
+  source_image_id INTEGER,
+  sort_order      INTEGER NOT NULL DEFAULT 0,
+  created_at      REAL    NOT NULL,
+  updated_at      REAL    NOT NULL,
+  FOREIGN KEY (category_id)     REFERENCES prompt_categories(id) ON DELETE SET NULL,
+  FOREIGN KEY (source_image_id) REFERENCES images(id)            ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fav_prompts_category ON favorite_prompts(category_id);
+CREATE INDEX IF NOT EXISTS idx_fav_prompts_name     ON favorite_prompts(name);
 """
 
 

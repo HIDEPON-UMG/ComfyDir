@@ -513,6 +513,221 @@ def assign_tags(body: TagAssignRequest, conn=Depends(get_conn)) -> dict[str, Any
     return {"ok": True}
 
 
+# ---------- favorite prompts (お気に入りプロンプト) ----------
+
+class FavoritePromptCreate(BaseModel):
+    """お気に入りプロンプト新規作成のペイロード。"""
+    name: str
+    category_id: int | None = None
+    positive: str = ""
+    negative: str = ""
+    memo: str = ""
+    source_image_id: int | None = None
+
+
+class FavoritePromptUpdate(BaseModel):
+    """お気に入りプロンプト部分更新ペイロード。
+
+    JSON にキーが存在するかで「更新するかどうか」を判定する
+    （Pydantic v2 の model_fields_set を使う）。
+    category_id に null を送ると「カテゴリ解除（未分類）」になる。
+    """
+    name: str | None = None
+    category_id: int | None = None
+    positive: str | None = None
+    negative: str | None = None
+    memo: str | None = None
+
+
+class PromptCategoryCreate(BaseModel):
+    name: str
+
+
+class PromptCategoryUpdate(BaseModel):
+    name: str | None = None
+    sort_order: int | None = None
+
+
+def _favorite_to_dict(r: Any) -> dict[str, Any]:
+    """sqlite3.Row -> JSON 用 dict 変換。"""
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "category_id": r["category_id"],
+        "category_name": r["category_name"],
+        "positive": r["positive"],
+        "negative": r["negative"],
+        "memo": r["memo"],
+        "source_image_id": r["source_image_id"],
+        "sort_order": r["sort_order"],
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    }
+
+
+def _category_to_dict(r: Any) -> dict[str, Any]:
+    out = {
+        "id": r["id"],
+        "name": r["name"],
+        "sort_order": r["sort_order"],
+        "created_at": r["created_at"],
+    }
+    # list 系では item_count も付く
+    if "item_count" in r.keys():
+        out["item_count"] = r["item_count"]
+    return out
+
+
+@router.get("/api/favorite-prompts")
+def list_favorite_prompts(
+    category_id: str = Query(default="all"),  # "all" | "uncategorized" | 数値
+    q: str = Query(default=""),
+    conn=Depends(get_conn),
+) -> list[dict[str, Any]]:
+    cf: Any
+    if category_id == "all":
+        cf = "all"
+    elif category_id == "uncategorized":
+        cf = "uncategorized"
+    else:
+        try:
+            cf = int(category_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="category_id が不正です")
+    rows = repo.list_favorite_prompts(
+        conn, category_filter=cf, q=q.strip() or None
+    )
+    return [_favorite_to_dict(r) for r in rows]
+
+
+@router.post("/api/favorite-prompts")
+def create_favorite_prompt(
+    body: FavoritePromptCreate, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="名前は必須です")
+    try:
+        row = repo.create_favorite_prompt(
+            conn,
+            name=body.name,
+            category_id=body.category_id,
+            positive=body.positive,
+            negative=body.negative,
+            memo=body.memo,
+            source_image_id=body.source_image_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _favorite_to_dict(row)
+
+
+@router.patch("/api/favorite-prompts/{fav_id}")
+def patch_favorite_prompt(
+    fav_id: int, body: FavoritePromptUpdate, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    provided = body.model_fields_set
+    kwargs: dict[str, Any] = {}
+    if "name" in provided:
+        kwargs["name"] = body.name
+    if "category_id" in provided:
+        kwargs["category_id"] = body.category_id  # None は「未分類化」
+    if "positive" in provided:
+        kwargs["positive"] = body.positive
+    if "negative" in provided:
+        kwargs["negative"] = body.negative
+    if "memo" in provided:
+        kwargs["memo"] = body.memo
+    try:
+        row = repo.update_favorite_prompt(conn, fav_id, **kwargs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if row is None:
+        raise HTTPException(status_code=404, detail="お気に入りが見つかりません")
+    return _favorite_to_dict(row)
+
+
+@router.delete("/api/favorite-prompts/{fav_id}")
+def delete_favorite_prompt(fav_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
+    n = repo.delete_favorite_prompt(conn, fav_id)
+    if n == 0:
+        raise HTTPException(status_code=404, detail="お気に入りが見つかりません")
+    return {"deleted": n}
+
+
+@router.get("/api/favorite-prompt-categories")
+def list_favorite_prompt_categories(conn=Depends(get_conn)) -> list[dict[str, Any]]:
+    rows = repo.list_prompt_categories(conn)
+    return [_category_to_dict(r) for r in rows]
+
+
+@router.post("/api/favorite-prompt-categories")
+def create_favorite_prompt_category(
+    body: PromptCategoryCreate, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="カテゴリ名が空です")
+    # 同名チェック (UNIQUE 制約に頼る前に明示的に 409 を返す)
+    dup = conn.execute(
+        "SELECT id FROM prompt_categories WHERE name = ?", (name,)
+    ).fetchone()
+    if dup is not None:
+        raise HTTPException(status_code=409, detail="同名のカテゴリが既にあります")
+    try:
+        row = repo.create_prompt_category(conn, name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    out = _category_to_dict(row)
+    out["item_count"] = 0
+    return out
+
+
+@router.patch("/api/favorite-prompt-categories/{category_id}")
+def patch_favorite_prompt_category(
+    category_id: int, body: PromptCategoryUpdate, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    provided = body.model_fields_set
+    new_name: str | None = None
+    if "name" in provided and body.name is not None:
+        new_name = body.name.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="カテゴリ名が空です")
+        dup = conn.execute(
+            "SELECT id FROM prompt_categories WHERE name = ? AND id != ?",
+            (new_name, category_id),
+        ).fetchone()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="同名のカテゴリが既にあります")
+    new_sort: int | None = body.sort_order if "sort_order" in provided else None
+    try:
+        row = repo.update_prompt_category(
+            conn, category_id, new_name=new_name, new_sort_order=new_sort
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if row is None:
+        raise HTTPException(status_code=404, detail="カテゴリが見つかりません")
+    # 件数も付けて返す（フロントの再描画を簡単に）
+    cnt = conn.execute(
+        "SELECT COUNT(*) AS n FROM favorite_prompts WHERE category_id = ?",
+        (category_id,),
+    ).fetchone()["n"]
+    out = _category_to_dict(row)
+    out["item_count"] = int(cnt)
+    return out
+
+
+@router.delete("/api/favorite-prompt-categories/{category_id}")
+def delete_favorite_prompt_category(
+    category_id: int, conn=Depends(get_conn)
+) -> dict[str, Any]:
+    """カテゴリを削除する。配下のお気に入りは ON DELETE SET NULL で未分類になる。"""
+    n = repo.delete_prompt_category(conn, category_id)
+    if n == 0:
+        raise HTTPException(status_code=404, detail="カテゴリが見つかりません")
+    return {"deleted": n}
+
+
 # ---------- SSE ----------
 
 @router.get("/api/events")
