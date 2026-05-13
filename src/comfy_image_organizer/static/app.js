@@ -66,7 +66,22 @@
     favorites: [],
     // 編集ダイアログのコンテキスト (新規 or 編集対象 ID)
     favoriteEditTarget: null,
+    // ライトボックスで表示中の画像 ID (null = 非表示)
+    lightboxImageId: null,
+    // ライトボックスのズーム倍率 (1 = 全体表示にフィット)
+    lightboxZoom: 1,
+    // ライトボックスのパン量 (transform-origin: 0 0 + translate(tx,ty) scale(s))
+    lightboxPanX: 0,
+    lightboxPanY: 0,
   };
+
+  // ライトボックスのズーム範囲とステップ (Google ドライブ風)
+  const LIGHTBOX_ZOOM_MIN = 0.25;
+  const LIGHTBOX_ZOOM_MAX = 8;
+  // ボタン/キー操作の 1 段あたりの倍率
+  const LIGHTBOX_ZOOM_STEP = 1.25;
+  // ホイール 1 ノッチ (deltaMode=0 で deltaY≈100) あたりの倍率
+  const LIGHTBOX_ZOOM_WHEEL_STEP = 1.15;
 
   // 右ペインのデフォルト並び順 (ファイル名/メタ → Myタグ → メモ → Positive → Negative)
   function sanitizePaneOrder(arr) {
@@ -305,12 +320,7 @@
       const isSameAsSelected =
         state.selected.size === 1 && state.selected.has(id) && state.lastClickedId === id;
       if (isSameAsSelected) {
-        const det = state.detail && state.detail.id === id ? state.detail : null;
-        const src = det
-          ? `/api/images/${det.id}/preview?v=${det.sha1.slice(0, 8)}`
-          : `/api/images/${id}/preview`;
-        const caption = det ? `${det.filename}  (${det.width}×${det.height})` : "";
-        openLightbox(src, caption);
+        openLightbox(id);
         return;
       }
       state.selected.clear();
@@ -1131,30 +1141,178 @@
   }
 
   // ---------------- ライトボックス ----------------
-  function openLightbox(src, caption) {
+  // 現在ライトボックスに表示中の画像 ID。state.images の並び順上でナビゲートする。
+  function openLightbox(imageId) {
+    const idx = state.images.findIndex(i => i.id === imageId);
+    if (idx < 0) return;
+    state.lightboxImageId = imageId;
+    showLightboxImage(idx);
     const lb = $("#lightbox");
-    $("#lightboxImg").src = src;
-    $("#lightboxCaption").textContent = caption || "";
-    if (typeof lb.showModal === "function") {
-      lb.showModal();
-    } else {
-      // 古いブラウザ向けフォールバック
-      lb.setAttribute("open", "");
+    if (!lb.open) {
+      if (typeof lb.showModal === "function") {
+        lb.showModal();
+      } else {
+        // 古いブラウザ向けフォールバック
+        lb.setAttribute("open", "");
+      }
     }
+  }
+
+  function showLightboxImage(idx) {
+    const img = state.images[idx];
+    if (!img) return;
+    state.lightboxImageId = img.id;
+    // 画像切替時はズーム/パンを完全リセット (全体表示)
+    resetLightboxView();
+    const src = `/api/images/${img.id}/preview?v=${img.sha1.slice(0, 8)}`;
+    const caption = `${img.width}×${img.height}  [${idx + 1}/${state.images.length}]`;
+    $("#lightboxImg").src = src;
+    $("#lightboxCaption").textContent = caption;
+    updateLightboxNavState(idx);
+  }
+
+  function updateLightboxNavState(idx) {
+    const total = state.images.length;
+    $("#lightboxPrev").disabled = idx <= 0;
+    $("#lightboxNext").disabled = idx >= total - 1;
+  }
+
+  function applyLightboxTransform() {
+    const el = $("#lightboxImg");
+    if (!el) return;
+    el.style.transform =
+      `translate(${state.lightboxPanX}px, ${state.lightboxPanY}px) scale(${state.lightboxZoom})`;
+  }
+
+  function updateZoomButtons() {
+    const z = state.lightboxZoom;
+    $("#lightboxZoomOut").disabled = z <= LIGHTBOX_ZOOM_MIN + 1e-6;
+    $("#lightboxZoomIn").disabled = z >= LIGHTBOX_ZOOM_MAX - 1e-6;
+  }
+
+  // ライトボックスのズーム/パンを完全リセット (画像切替・「全体表示」ボタン)
+  function resetLightboxView() {
+    state.lightboxZoom = 1;
+    state.lightboxPanX = 0;
+    state.lightboxPanY = 0;
+    applyLightboxTransform();
+    updateZoomButtons();
+  }
+
+  // 指定アンカー (viewport 座標) を固定点にしてズーム。
+  // anchorX/anchorY 省略時は現在の画像の中心を固定点にする。
+  // transform-origin: 0 0 前提なので、layout 上の左上 x0 = rect.left - tx と置けて、
+  // 新しい rect.left' = anchor - imageLocal * newScale から逆算で新 tx を求める。
+  function setLightboxZoom(newScale, anchorX, anchorY) {
+    const clamped = Math.max(LIGHTBOX_ZOOM_MIN, Math.min(LIGHTBOX_ZOOM_MAX, newScale));
+    const el = $("#lightboxImg");
+    if (!el) {
+      state.lightboxZoom = clamped;
+      updateZoomButtons();
+      return;
+    }
+    if (Math.abs(clamped - state.lightboxZoom) < 1e-6) {
+      updateZoomButtons();
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const ax = (typeof anchorX === "number") ? anchorX : (rect.left + rect.width / 2);
+    const ay = (typeof anchorY === "number") ? anchorY : (rect.top + rect.height / 2);
+    // 現在 scale 下でアンカーが指す image-local 座標 (未変換ピクセル)
+    const ix = (ax - rect.left) / state.lightboxZoom;
+    const iy = (ay - rect.top) / state.lightboxZoom;
+    // 新 scale 適用後にこの ix,iy を ax,ay の位置に保ちたい
+    const newLeft = ax - ix * clamped;
+    const newTop  = ay - iy * clamped;
+    // x0 = rect.left - panX が layout 上の左上。tx' = newLeft - x0
+    state.lightboxPanX = newLeft - (rect.left - state.lightboxPanX);
+    state.lightboxPanY = newTop  - (rect.top  - state.lightboxPanY);
+    state.lightboxZoom = clamped;
+    applyLightboxTransform();
+    updateZoomButtons();
+  }
+
+  function navigateLightbox(delta) {
+    if (state.lightboxImageId == null) return;
+    const idx = state.images.findIndex(i => i.id === state.lightboxImageId);
+    if (idx < 0) return;
+    const next = idx + delta;
+    if (next < 0 || next >= state.images.length) return;
+    showLightboxImage(next);
   }
 
   function setupLightbox() {
     const lb = $("#lightbox");
-    const lbImg = $("#lightboxImg");
     const closeIt = () => {
       if (typeof lb.close === "function") lb.close();
       else lb.removeAttribute("open");
+      state.lightboxImageId = null;
     };
-    lbImg.onclick = closeIt;
+    // 画像クリックは閉じない (Google ドライブと同様 / 拡縮との衝突回避)
     $("#lightboxClose").onclick = closeIt;
-    // 背景 (画像以外の領域) クリックで閉じる
+    $("#lightboxPrev").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      navigateLightbox(-1);
+    });
+    $("#lightboxNext").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      navigateLightbox(+1);
+    });
+    $("#lightboxZoomIn").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      setLightboxZoom(state.lightboxZoom * LIGHTBOX_ZOOM_STEP);
+    });
+    $("#lightboxZoomOut").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      setLightboxZoom(state.lightboxZoom / LIGHTBOX_ZOOM_STEP);
+    });
+    $("#lightboxZoomReset").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      resetLightboxView();
+    });
+    // マウスホイールでカーソル位置を中心に拡縮 (Google ドライブ風)
+    // deltaMode を吸収して 1 ノッチあたり一定倍率にする。
+    lb.addEventListener("wheel", (ev) => {
+      // dialog 内ではページスクロール/履歴ナビを抑止
+      ev.preventDefault();
+      // notches: ノッチ数の絶対値 (ピクセル単位:0, 行:1, ページ:2)
+      let notches;
+      if (ev.deltaMode === 1) notches = Math.abs(ev.deltaY) / 3;       // 行
+      else if (ev.deltaMode === 2) notches = Math.abs(ev.deltaY);       // ページ
+      else notches = Math.abs(ev.deltaY) / 100;                         // ピクセル
+      if (notches <= 0) return;
+      // 滑らかさのため指数で適用
+      const factor = Math.pow(LIGHTBOX_ZOOM_WHEEL_STEP, notches);
+      const next = ev.deltaY < 0 ? state.lightboxZoom * factor
+                                 : state.lightboxZoom / factor;
+      setLightboxZoom(next, ev.clientX, ev.clientY);
+    }, { passive: false });
+    // 背景 (画像/UI 以外の領域) クリックで閉じる
     lb.addEventListener("click", (ev) => {
       if (ev.target === lb) closeIt();
+    });
+    // dialog 標準の Esc 閉じで state を後始末
+    lb.addEventListener("close", () => {
+      state.lightboxImageId = null;
+    });
+    // キーボード: ←/→ で前後遷移、+/- でズーム、0 で全体表示
+    lb.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        navigateLightbox(-1);
+      } else if (ev.key === "ArrowRight") {
+        ev.preventDefault();
+        navigateLightbox(+1);
+      } else if (ev.key === "+" || ev.key === "=") {
+        ev.preventDefault();
+        setLightboxZoom(state.lightboxZoom * LIGHTBOX_ZOOM_STEP);
+      } else if (ev.key === "-" || ev.key === "_") {
+        ev.preventDefault();
+        setLightboxZoom(state.lightboxZoom / LIGHTBOX_ZOOM_STEP);
+      } else if (ev.key === "0") {
+        ev.preventDefault();
+        resetLightboxView();
+      }
     });
   }
 

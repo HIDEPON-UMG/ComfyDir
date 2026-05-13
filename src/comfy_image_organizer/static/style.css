@@ -590,18 +590,28 @@ dialog.lightbox img {
   height: auto;
   margin: 0 auto;
   object-fit: contain;
-  cursor: zoom-out;
+  cursor: default;
   user-select: none;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 dialog.lightbox .lightbox-caption {
   position: fixed;
-  left: 0; right: 0; bottom: 0;
-  padding: 8px 16px;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
   background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
   font-size: 12px;
   color: var(--fg-dim);
   text-align: center;
   pointer-events: none;
+  max-width: 80vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
 }
 dialog.lightbox .lightbox-close {
   position: fixed;
@@ -615,12 +625,90 @@ dialog.lightbox .lightbox-close {
   line-height: 1;
   font-weight: 600;
   cursor: pointer;
+  z-index: 3;
 }
 dialog.lightbox .lightbox-close:hover {
   background: #d97070;
   color: #fff;
   border-color: #fff;
 }
+
+/* 前後ナビ (Google ドライブ風: 左右端に円形ボタン) */
+dialog.lightbox .lightbox-nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(40, 40, 40, 0.72);
+  color: rgba(255, 255, 255, 0.92);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  z-index: 3;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+dialog.lightbox .lightbox-nav-prev { left: 24px; }
+dialog.lightbox .lightbox-nav-next { right: 24px; }
+dialog.lightbox .lightbox-nav:hover:not([disabled]) {
+  background: rgba(70, 70, 70, 0.92);
+}
+dialog.lightbox .lightbox-nav:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 2px;
+}
+dialog.lightbox .lightbox-nav[disabled] {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+dialog.lightbox .lightbox-nav svg { display: block; }
+
+/* ズームコントロール (画像直下中央のピル状バー) */
+dialog.lightbox .lightbox-zoom {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background: rgba(40, 40, 40, 0.72);
+  border-radius: 999px;
+  z-index: 3;
+}
+dialog.lightbox .lightbox-zoom-btn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+dialog.lightbox .lightbox-zoom-btn:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.14);
+}
+dialog.lightbox .lightbox-zoom-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 1px;
+}
+dialog.lightbox .lightbox-zoom-btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+dialog.lightbox .lightbox-zoom-btn svg { display: block; }
 .preview-wrap img {
   cursor: zoom-in;
 }

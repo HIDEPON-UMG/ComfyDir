@@ -68,7 +68,7 @@
   <div id="helpBanner" class="help-banner">
     <strong>使い方:</strong>
     <span class="help-step"><b>1</b> 「+ 追加」で ComfyUI の出力フォルダを登録</span>
-    <span class="help-step"><b>2</b> 画像クリックで右ペインにプロンプト表示（画像を再クリックで全画面）</span>
+    <span class="help-step"><b>2</b> 画像クリックで右ペインにプロンプト表示（画像を再クリックで全画面 → 左右の ‹ › ボタン or ←→ キーで前後の画像、下部 −/+ で拡縮）</span>
     <span class="help-step"><b>3</b> Ctrl / Shift クリックで複数選択 → 「📁 別フォルダへ移動」</span>
     <span class="help-step"><b>4</b> 上部の「検索」や「Myタグフィルタ」で絞り込み（Myタグは自由入力＋既存候補）</span>
     <span class="help-step"><b>5</b> ペイン中央のグレー帯をドラッグで右ペイン幅を変更</span>
@@ -244,6 +244,50 @@
   <dialog id="lightbox" class="lightbox">
     <img id="lightboxImg" alt="" />
     <div class="lightbox-caption" id="lightboxCaption"></div>
+
+    <button class="lightbox-nav lightbox-nav-prev" id="lightboxPrev"
+            title="前の画像 (←)" aria-label="前の画像" type="button">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+           stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="15 6 9 12 15 18" />
+      </svg>
+    </button>
+    <button class="lightbox-nav lightbox-nav-next" id="lightboxNext"
+            title="次の画像 (→)" aria-label="次の画像" type="button">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
+           stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="9 6 15 12 9 18" />
+      </svg>
+    </button>
+
+    <div class="lightbox-zoom" id="lightboxZoom" role="toolbar" aria-label="ズーム">
+      <button type="button" class="lightbox-zoom-btn" id="lightboxZoomOut"
+              title="縮小" aria-label="縮小">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <line x1="6" y1="12" x2="18" y2="12" />
+        </svg>
+      </button>
+      <button type="button" class="lightbox-zoom-btn" id="lightboxZoomReset"
+              title="全体表示にリセット" aria-label="全体表示にリセット">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="10" cy="10" r="6" />
+          <line x1="14.5" y1="14.5" x2="20" y2="20" />
+        </svg>
+      </button>
+      <button type="button" class="lightbox-zoom-btn" id="lightboxZoomIn"
+              title="拡大" aria-label="拡大">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <line x1="6" y1="12" x2="18" y2="12" />
+          <line x1="12" y1="6" x2="12" y2="18" />
+        </svg>
+      </button>
+    </div>
+
     <button class="lightbox-close" id="lightboxClose" title="閉じる (Esc)">×</button>
   </dialog>
 
