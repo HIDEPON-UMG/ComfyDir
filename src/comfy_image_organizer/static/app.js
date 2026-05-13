@@ -1165,9 +1165,7 @@
     // 画像切替時はズーム/パンを完全リセット (全体表示)
     resetLightboxView();
     const src = `/api/images/${img.id}/preview?v=${img.sha1.slice(0, 8)}`;
-    const caption = `${img.width}×${img.height}  [${idx + 1}/${state.images.length}]`;
     $("#lightboxImg").src = src;
-    $("#lightboxCaption").textContent = caption;
     updateLightboxNavState(idx);
   }
 
