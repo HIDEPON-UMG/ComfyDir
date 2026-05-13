@@ -1241,12 +1241,14 @@
 
   function setupLightbox() {
     const lb = $("#lightbox");
+    const lbImg = $("#lightboxImg");
     const closeIt = () => {
       if (typeof lb.close === "function") lb.close();
       else lb.removeAttribute("open");
       state.lightboxImageId = null;
     };
-    // 画像クリックは閉じない (Google ドライブと同様 / 拡縮との衝突回避)
+    // 画像クリックでは閉じない。代わりに「単なる左クリック = リセット、
+    // 左ドラッグ = パン」のハンドラを下で割り当てる。
     $("#lightboxClose").onclick = closeIt;
     $("#lightboxPrev").addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -1268,6 +1270,51 @@
       ev.stopPropagation();
       resetLightboxView();
     });
+    // 画像の左マウスドラッグでパン (押下中のカーソル移動量だけ translate を加算)。
+    // ドラッグせずに離した場合 = 単なるクリックとみなしてビューをリセット。
+    // ナビ/ズーム/閉じる ボタンは別 z-index で上に乗っているので、それらをクリック
+    // した場合の mousedown は img には到達せず誤反応しない。
+    const DRAG_THRESHOLD_PX = 4;
+    let drag = null;
+    const onDragMove = (ev) => {
+      if (!drag) return;
+      const dx = ev.clientX - drag.startX;
+      const dy = ev.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        lbImg.classList.add("dragging");
+      }
+      state.lightboxPanX = drag.startPanX + dx;
+      state.lightboxPanY = drag.startPanY + dy;
+      applyLightboxTransform();
+    };
+    const onDragEnd = () => {
+      if (!drag) return;
+      const wasDrag = drag.moved;
+      drag = null;
+      lbImg.classList.remove("dragging");
+      window.removeEventListener("mousemove", onDragMove);
+      window.removeEventListener("mouseup", onDragEnd);
+      if (!wasDrag) {
+        // 移動していない = ただの左クリック → デフォルト表示にリセット
+        resetLightboxView();
+      }
+    };
+    lbImg.addEventListener("mousedown", (ev) => {
+      if (ev.button !== 0) return; // 左ボタンのみ
+      drag = {
+        startX: ev.clientX,
+        startY: ev.clientY,
+        startPanX: state.lightboxPanX,
+        startPanY: state.lightboxPanY,
+        moved: false,
+      };
+      ev.preventDefault(); // HTML5 デフォルト画像ドラッグの抑止
+      window.addEventListener("mousemove", onDragMove);
+      window.addEventListener("mouseup", onDragEnd);
+    });
+
     // マウスホイールでカーソル位置を中心に拡縮 (Google ドライブ風)
     // deltaMode を吸収して 1 ノッチあたり一定倍率にする。
     lb.addEventListener("wheel", (ev) => {

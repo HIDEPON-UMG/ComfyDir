@@ -590,10 +590,14 @@ dialog.lightbox img {
   height: auto;
   margin: 0 auto;
   object-fit: contain;
-  cursor: default;
+  cursor: grab;
   user-select: none;
+  -webkit-user-drag: none;
   transform-origin: 0 0;
   will-change: transform;
+}
+dialog.lightbox img.dragging {
+  cursor: grabbing;
 }
 dialog.lightbox .lightbox-close {
   position: fixed;
