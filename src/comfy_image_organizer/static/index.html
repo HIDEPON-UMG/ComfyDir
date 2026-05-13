@@ -1,118 +1,232 @@
 <!doctype html>
-<html lang="ja">
+<html lang="ja" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <title>ComfyDir</title>
-  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <!-- 新ブランドマークの SVG favicon (Chromium/Firefox 系で優先採用される) -->
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <!-- 古いブラウザ・タスクバー固定用のフォールバック (assets/app.ico を流用) -->
+  <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">ComfyDir</div>
-    <button id="helpReopen" class="help-reopen" title="使い方を表示" hidden>？</button>
+  <div class="app">
 
-    <div class="ctl">
-      <label>監視フォルダ:</label>
-      <select id="folderSelect"></select>
-      <button id="btnAddFolder" class="btn-primary" title="フォルダを追加">+ 追加</button>
-      <button id="btnRescan" class="btn-sub" title="再スキャン">↻ 再スキャン</button>
-      <button id="btnEditFolder" class="btn-sub" title="このフォルダのパス/ラベルを編集">✎ 編集</button>
-      <button id="btnRemoveFolder" class="danger" title="このフォルダを登録解除">解除</button>
-    </div>
-
-    <div class="ctl">
-      <label>サイズ:</label>
-      <input id="sizeSlider" type="range" min="80" max="512" value="200" />
-      <input id="sizeNumber" type="number" min="80" max="512" step="1" value="200" />
-      <span class="unit">px</span>
-    </div>
-
-    <div class="ctl">
-      <label>Myタグフィルタ:</label>
-      <div id="tagFilterChips" class="chips"></div>
-      <input id="tagFilterInput" type="text" list="tagFilterDatalist"
-             placeholder="Myタグ名 (Enter で追加)" autocomplete="off" size="14" />
-      <datalist id="tagFilterDatalist"></datalist>
-      <button id="tagFilterAdd" class="btn-primary" title="Myタグ条件を追加">+</button>
-      <select id="tagFilterMode" title="複数Myタグの結合方法">
-        <option value="and">AND</option>
-        <option value="or">OR</option>
-      </select>
-    </div>
-
-    <div class="ctl">
-      <label>検索:</label>
-      <div class="prompt-search-wrap">
-        <input id="promptSearch" type="search"
-               placeholder="プロンプト内検索 (空白区切りでAND)"
-               autocomplete="off" spellcheck="false" size="24" />
-        <div id="promptSuggest" class="tag-suggest" hidden role="listbox"></div>
-      </div>
-      <button id="promptSearchClear" class="btn-close" title="プロンプト検索クリア">×</button>
-      <input id="memoSearch" type="search"
-             placeholder="メモ内検索"
-             autocomplete="off" size="16" />
-      <button id="memoSearchClear" class="btn-close" title="メモ検索クリア">×</button>
-    </div>
-
-    <div class="ctl">
-      <button id="btnFavoritesToggle" class="btn-sub btn-fav-toggle"
-              title="お気に入りプロンプトの一覧を右ペインに表示" aria-pressed="false">
-        ★ お気に入り
-      </button>
-    </div>
-
-    <div class="ctl status" id="statusBar"></div>
-  </header>
-
-  <div id="helpBanner" class="help-banner">
-    <strong>使い方:</strong>
-    <span class="help-step"><b>1</b> 「+ 追加」で ComfyUI の出力フォルダを登録</span>
-    <span class="help-step"><b>2</b> 画像クリックで右ペインにプロンプト表示（画像を再クリックで全画面 → 左右の ‹ › ボタン or ←→ キーで前後の画像、下部 −/+ で拡縮）</span>
-    <span class="help-step"><b>3</b> Ctrl / Shift クリックで複数選択 → 「📁 別フォルダへ移動」</span>
-    <span class="help-step"><b>4</b> 上部の「検索」や「Myタグフィルタ」で絞り込み（Myタグは自由入力＋既存候補）</span>
-    <span class="help-step"><b>5</b> ペイン中央のグレー帯をドラッグで右ペイン幅を変更</span>
-    <button id="helpClose" class="help-close" title="このバーを閉じる">×</button>
-  </div>
-
-  <main class="main" id="mainSplit">
-    <section class="grid-pane">
-      <div class="grid-toolbar">
-        <span id="gridSummary"></span>
-        <button id="btnMove" class="btn-move btn-primary" title="選択した画像を別フォルダに移動" disabled>📁 別フォルダへ移動</button>
-        <div class="ctl ctl-order" title="グリッドの並び順を変更">
-          <label for="orderSelect">並び順:</label>
-          <select id="orderSelect">
-            <option value="name|asc">名前 ↑</option>
-            <option value="name|desc">名前 ↓</option>
-            <option value="mtime|desc">更新日時 ↓</option>
-            <option value="mtime|asc">更新日時 ↑</option>
-            <option value="added|desc">追加日時 ↓</option>
-          </select>
+    <!-- ============================== TOOLBAR ============================== -->
+    <header class="toolbar topbar">
+      <!-- Brand -->
+      <div class="brand">
+        <div class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="brand-g" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="var(--color-accent)" />
+                <stop offset="1" stop-color="var(--color-accent-hover)" />
+              </linearGradient>
+            </defs>
+            <rect x="4" y="8" width="20" height="20" rx="5" fill="none"
+                  stroke="var(--color-fg-secondary)" stroke-width="1.6" />
+            <rect x="9" y="3" width="20" height="20" rx="5" fill="url(#brand-g)" />
+            <circle cx="22" cy="10" r="2" fill="var(--color-bg-base)" />
+            <path d="M9 21 L15 15 L20 19 L26 13 L26 23 Z" fill="var(--color-bg-base)" opacity="0.35" />
+          </svg>
         </div>
-        <span class="spacer"></span>
-        <span class="hint">クリック: 単一選択 / Ctrl+クリック: 追加 / Shift+クリック: 範囲</span>
+        <div class="brand__name">
+          <strong>ComfyDir</strong>
+          <small>image organizer</small>
+        </div>
       </div>
-      <div id="grid" class="grid"></div>
+
+      <!-- Center: two rows -->
+      <div class="toolbar__center">
+        <!-- Row 1: フォルダ + サイズ -->
+        <div class="toolbar__row">
+          <div class="group">
+            <span class="group__label">フォルダ</span>
+            <div class="field field--w-md">
+              <span class="field__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              </span>
+              <select id="folderSelect" aria-label="監視フォルダ"></select>
+            </div>
+            <button id="btnAddFolder" class="btn btn--primary" title="フォルダを追加">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+              追加
+            </button>
+            <button id="btnRescan" class="btn btn--sub" title="再スキャン">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.4L3 16"/><path d="M3 21v-5h5"/></svg>
+              再スキャン
+            </button>
+            <button id="btnEditFolder" class="btn btn--sub" title="このフォルダのパス/ラベルを編集">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+              編集
+            </button>
+            <button id="btnRemoveFolder" class="btn btn--danger" title="このフォルダを登録解除">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              解除
+            </button>
+          </div>
+
+          <span class="toolbar__divider"></span>
+
+          <div class="group">
+            <span class="group__label">サイズ</span>
+            <div class="size-slider">
+              <input id="sizeSlider" type="range" min="80" max="512" value="200" aria-label="サムネサイズ" />
+              <div class="field" style="width:84px">
+                <input id="sizeNumber" type="number" min="80" max="512" step="1" value="200" aria-label="サムネサイズ(数値)" />
+                <span class="field__suffix">px</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: Myタグフィルタ + 検索 -->
+        <div class="toolbar__row">
+          <div class="group" style="flex:0 1 320px; min-width:260px;">
+            <span class="group__label">Myタグ</span>
+            <div class="chip-input" id="tagFilterChips">
+              <input id="tagFilterInput" type="text" list="tagFilterDatalist"
+                     placeholder="タグ名 (Enter で追加)" autocomplete="off" />
+              <datalist id="tagFilterDatalist"></datalist>
+            </div>
+            <button id="tagFilterAdd" class="btn btn--primary btn--icon" title="Myタグ条件を追加" aria-label="追加">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <div class="field" style="width:78px">
+              <select id="tagFilterMode" aria-label="結合方法">
+                <option value="and">AND</option>
+                <option value="or">OR</option>
+              </select>
+            </div>
+          </div>
+
+          <span class="toolbar__divider"></span>
+
+          <div class="group" style="flex:1 1 auto; min-width:0;">
+            <span class="group__label">検索</span>
+            <div class="prompt-search-wrap">
+              <div class="field field--grow">
+                <span class="field__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                </span>
+                <input id="promptSearch" type="search"
+                       placeholder="プロンプト内検索 (空白区切りで AND)"
+                       autocomplete="off" spellcheck="false" />
+                <button id="promptSearchClear" class="icon-btn" title="プロンプト検索クリア" aria-label="クリア">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div id="promptSuggest" class="tag-suggest" hidden role="listbox"></div>
+            </div>
+            <div class="field field--grow">
+              <span class="field__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+              </span>
+              <input id="memoSearch" type="search" placeholder="メモ内検索" autocomplete="off" />
+              <button id="memoSearchClear" class="icon-btn" title="メモ検索クリア" aria-label="クリア">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right column -->
+      <div class="toolbar__right">
+        <div style="display:flex; gap:var(--space-3); align-items:center;">
+          <button id="helpReopen" class="btn btn--ghost btn--icon" title="使い方を表示" aria-label="ヘルプ" hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </button>
+          <button id="btnFavoritesToggle" class="btn btn--toggle"
+                  title="お気に入りプロンプトの一覧を右ペインに表示" aria-pressed="false">
+            <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.95 6.6L22 9.7l-5.3 5 1.4 7.3L12 18.5 5.9 22l1.4-7.3L2 9.7l7.05-1.1z"/></svg>
+            お気に入り
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ============================== HELP BANNER ============================== -->
+    <section id="helpBanner" class="helpbar">
+      <div class="helpbar__label">使い方</div>
+      <ol class="helpbar__list">
+        <li class="helpbar__item"><span class="helpbar__num">1</span><span><strong style="color:var(--color-fg-primary)">追加</strong> から ComfyUI 出力フォルダを登録</span></li>
+        <li class="helpbar__item"><span class="helpbar__num">2</span>画像クリックで右ペイン展開・再クリックでライトボックス</li>
+        <li class="helpbar__item"><span class="helpbar__num">3</span><kbd>Ctrl</kbd>/<kbd>Shift</kbd>+クリックで複数選択 → 別フォルダへ移動</li>
+        <li class="helpbar__item"><span class="helpbar__num">4</span>検索・タグで絞り込み (タグは自由入力＋候補)</li>
+        <li class="helpbar__item"><span class="helpbar__num">5</span>中央のグリップをドラッグで右ペイン幅を変更</li>
+      </ol>
+      <button id="helpClose" class="icon-btn" title="このバーを閉じる" aria-label="ヘルプを閉じる">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
     </section>
 
-    <div id="splitter" class="splitter" title="ドラッグで幅変更"></div>
+    <!-- ============================== MAIN ============================== -->
+    <main class="main" id="mainSplit">
+      <!-- Grid pane -->
+      <section class="grid-pane">
+        <div class="grid-toolbar">
+          <div class="grid-toolbar__count" id="gridSummary"></div>
+          <button id="btnMove" class="btn btn--primary" title="選択した画像を別フォルダに移動" disabled>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m14 11 3 3-3 3"/><path d="M17 14H8"/></svg>
+            別フォルダへ移動
+          </button>
+          <div class="grid-toolbar__sort" title="グリッドの並び順を変更">
+            <span class="group__label">並び</span>
+            <div class="field" style="width:148px">
+              <select id="orderSelect" aria-label="並び順">
+                <option value="name|asc">名前 ↑</option>
+                <option value="name|desc">名前 ↓</option>
+                <option value="mtime|desc">更新日時 ↓</option>
+                <option value="mtime|asc">更新日時 ↑</option>
+                <option value="added|desc">追加日時 ↓</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid-toolbar__hint">
+            <code>Click</code> 単一 · <code>Ctrl</code>+Click 追加 · <code>Shift</code>+Click 範囲
+          </div>
+        </div>
+        <div id="grid" class="grid"></div>
+      </section>
 
-    <aside id="rightPane" class="right-pane">
-      <div class="empty">画像を選択してください</div>
-    </aside>
-  </main>
+      <!-- Splitter -->
+      <div id="splitter" class="splitter" title="ドラッグで幅変更"
+           role="separator" aria-orientation="vertical" tabindex="0"></div>
 
+      <!-- Right pane -->
+      <aside id="rightPane" class="detail right-pane">
+        <div class="empty">画像を選択してください</div>
+      </aside>
+    </main>
+
+    <!-- ============================== STATUS BAR ============================== -->
+    <footer class="statusbar">
+      <span class="statusbar__dot" title="watchdog 監視中"></span>
+      <span style="color: var(--color-fg-secondary)">watchdog 監視中</span>
+      <span id="statusBar" class="statusbar__msg"></span>
+      <span class="statusbar__spacer"></span>
+      <span style="color: var(--color-fg-secondary)">SSE: <span id="sseStatus" style="color: var(--color-success)">connected</span></span>
+    </footer>
+  </div>
+
+  <!-- ============================== Dialogs ============================== -->
   <!-- フォルダ追加ダイアログ -->
   <dialog id="addFolderDialog">
     <form method="dialog">
       <h3>フォルダを追加</h3>
       <p>ComfyUI の出力フォルダなどの絶対パスを入力してください。</p>
       <input id="folderPathInput" type="text" placeholder="C:\\path\\to\\ComfyUI\\output" autocomplete="off" />
-      <input id="folderLabelInput" type="text" placeholder="表示ラベル (省略可)" autocomplete="off" />
+      <input id="folderLabelInput" type="text" placeholder="表示ラベル (省略可)" autocomplete="off" style="margin-top:var(--space-3)" />
       <menu>
-        <button class="btn-ghost" value="cancel">キャンセル</button>
-        <button id="btnAddFolderSubmit" class="btn-primary" value="default">追加</button>
+        <button class="btn btn--ghost" value="cancel">キャンセル</button>
+        <button id="btnAddFolderSubmit" class="btn btn--primary" value="default">追加</button>
       </menu>
     </form>
   </dialog>
@@ -129,8 +243,8 @@
         <input id="folderEditLabelInput" type="text" placeholder="(空欄でフォルダ名を表示)" autocomplete="off" />
       </label>
       <menu>
-        <button class="btn-ghost" value="cancel">キャンセル</button>
-        <button id="btnEditFolderSubmit" class="btn-primary" value="default">保存</button>
+        <button class="btn btn--ghost" value="cancel">キャンセル</button>
+        <button id="btnEditFolderSubmit" class="btn btn--primary" value="default">保存</button>
       </menu>
     </form>
   </dialog>
@@ -159,13 +273,13 @@
       </fieldset>
 
       <menu>
-        <button class="btn-ghost" value="cancel">キャンセル</button>
-        <button id="btnMoveSubmit" class="btn-primary" value="default">移動</button>
+        <button class="btn btn--ghost" value="cancel">キャンセル</button>
+        <button id="btnMoveSubmit" class="btn btn--primary" value="default">移動</button>
       </menu>
     </form>
   </dialog>
 
-  <!-- お気に入りプロンプト 編集ダイアログ (新規・編集兼用) -->
+  <!-- お気に入りプロンプト 編集ダイアログ -->
   <dialog id="favoriteEditDialog" class="favorite-dialog">
     <form method="dialog">
       <h3 id="favoriteEditTitle">お気に入りに追加</h3>
@@ -187,11 +301,11 @@
 
       <label>Positive プロンプト
         <div class="prompt-btn-bar fav-edit-btn-bar">
-          <button type="button" id="favEditPosCopy" class="copy-btn btn-sub"
+          <button type="button" id="favEditPosCopy" class="btn btn--sub"
                   title="現在のテキストをクリップボードへ">コピー</button>
-          <button type="button" id="favEditPosSort" class="sort-btn btn-sub"
+          <button type="button" id="favEditPosSort" class="btn btn--sub"
                   title="カテゴリ別に並び替え">並べ替え</button>
-          <button type="button" id="favEditPosUndo" class="undo-btn btn-sub"
+          <button type="button" id="favEditPosUndo" class="btn btn--sub"
                   title="並び替え前の値に戻す" disabled>戻る</button>
         </div>
         <textarea id="favoriteEditPositive" rows="6" spellcheck="false"></textarea>
@@ -199,11 +313,11 @@
 
       <label>Negative プロンプト
         <div class="prompt-btn-bar fav-edit-btn-bar">
-          <button type="button" id="favEditNegCopy" class="copy-btn btn-sub"
+          <button type="button" id="favEditNegCopy" class="btn btn--sub"
                   title="現在のテキストをクリップボードへ">コピー</button>
-          <button type="button" id="favEditNegSort" class="sort-btn btn-sub"
+          <button type="button" id="favEditNegSort" class="btn btn--sub"
                   title="カテゴリ別に並び替え">並べ替え</button>
-          <button type="button" id="favEditNegUndo" class="undo-btn btn-sub"
+          <button type="button" id="favEditNegUndo" class="btn btn--sub"
                   title="並び替え前の値に戻す" disabled>戻る</button>
         </div>
         <textarea id="favoriteEditNegative" rows="4" spellcheck="false"></textarea>
@@ -214,8 +328,8 @@
       </label>
 
       <menu>
-        <button class="btn-ghost" value="cancel">キャンセル</button>
-        <button id="btnFavoriteEditSubmit" class="btn-primary" value="default">保存</button>
+        <button class="btn btn--ghost" value="cancel">キャンセル</button>
+        <button id="btnFavoriteEditSubmit" class="btn btn--primary" value="default">保存</button>
       </menu>
     </form>
   </dialog>
@@ -231,16 +345,16 @@
       <fieldset class="category-add">
         <legend>新規カテゴリを追加</legend>
         <input id="categoryAddName" type="text" placeholder="カテゴリ名" autocomplete="off" maxlength="60" />
-        <button id="btnCategoryAdd" class="btn-primary" type="button">＋ 追加</button>
+        <button id="btnCategoryAdd" class="btn btn--primary" type="button" style="margin-left:var(--space-3)">＋ 追加</button>
       </fieldset>
 
       <menu>
-        <button class="btn-ghost" value="cancel">閉じる</button>
+        <button class="btn btn--ghost" value="cancel">閉じる</button>
       </menu>
     </form>
   </dialog>
 
-  <!-- ライトボックス (右ペインの画像クリックで全画面表示) -->
+  <!-- ライトボックス -->
   <dialog id="lightbox" class="lightbox">
     <img id="lightboxImg" alt="" draggable="false" />
 

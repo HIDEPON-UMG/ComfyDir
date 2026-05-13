@@ -267,26 +267,47 @@
     g.innerHTML = "";
     const w = state.thumbW;
     const reqW = snapThumbW(w);
-    g.style.setProperty("--thumb-w", `${w}px`);
+    g.style.setProperty("--thumb-size", `${w}px`);
 
     for (const img of state.images) {
-      const cell = document.createElement("div");
-      cell.className = "cell" + (state.selected.has(img.id) ? " selected" : "");
-      cell.dataset.id = img.id;
-      cell.style.setProperty("--thumb-w", `${w}px`);
+      const tile = document.createElement("article");
+      tile.className = "tile" + (state.selected.has(img.id) ? " is-selected" : "");
+      tile.dataset.id = img.id;
+
+      const thumb = document.createElement("div");
+      thumb.className = "tile__thumb";
+      // 各タイルを画像の自然アスペクト比に合わせる (1:1 固定をやめて、
+      // 横長画像の上下レターボックスをなくす)。極端比は念のため [0.4, 2.5] にクランプ。
+      if (img.width > 0 && img.height > 0) {
+        const a = img.width / img.height;
+        const clamped = Math.max(0.4, Math.min(2.5, a));
+        thumb.style.setProperty("--img-aspect", String(clamped));
+      }
 
       const i = document.createElement("img");
       i.loading = "lazy";
       i.src = `/api/images/${img.id}/thumb?w=${reqW}&v=${img.sha1.slice(0, 8)}`;
-      cell.appendChild(i);
+      i.alt = img.filename;
+      thumb.appendChild(i);
 
-      const n = document.createElement("div");
-      n.className = "name";
-      n.textContent = img.filename;
-      cell.appendChild(n);
+      // 選択チェックマーク (hover or 選択中に表示)
+      const check = document.createElement("span");
+      check.className = "tile__check";
+      check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+      thumb.appendChild(check);
 
-      cell.addEventListener("click", (ev) => onCellClick(ev, img.id));
-      g.appendChild(cell);
+      // hover で重ねるキャプション (画面下のグラデーション帯に乗る)
+      const cap = document.createElement("span");
+      cap.className = "tile__caption";
+      cap.textContent = img.filename;
+      thumb.appendChild(cap);
+
+      tile.appendChild(thumb);
+      // ファイル名はサムネ内オーバーレイ (.tile__caption) のみ表示。
+      // 下部の独立した枠は冗長なので外している。
+
+      tile.addEventListener("click", (ev) => onCellClick(ev, img.id));
+      g.appendChild(tile);
     }
 
     updateSummary();
@@ -294,8 +315,14 @@
   }
 
   function updateSummary() {
-    $("#gridSummary").textContent = `${state.images.length} 枚` +
-      (state.selected.size ? ` / ${state.selected.size} 枚選択中` : "");
+    const total = state.images.length;
+    const sel = state.selected.size;
+    const el = $("#gridSummary");
+    if (sel > 0) {
+      el.innerHTML = `<strong>${total}</strong> 枚 <span style="margin:0 var(--space-3);color:var(--color-border-strong)">·</span> <em>${sel}</em> 枚選択中`;
+    } else {
+      el.innerHTML = `<strong>${total}</strong> 枚`;
+    }
   }
 
   function updateMoveButton() {
@@ -546,31 +573,32 @@
 
   function buildSection(id, meta, bodyDom) {
     const sec = document.createElement("section");
-    sec.className = "pane-section";
+    sec.className = "pane-section detail-section";
     sec.dataset.sectionId = id;
 
     const header = document.createElement("div");
-    header.className = "pane-section-header";
+    header.className = "pane-section-header detail-section__head";
     const handle = document.createElement("span");
-    handle.className = "drag-handle";
+    handle.className = "drag-handle detail-section__drag";
     handle.title = "ドラッグして並び替え";
-    handle.textContent = "⋮⋮";
+    handle.innerHTML = '<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="2.5" cy="2"  r="1.2"/><circle cx="7.5" cy="2"  r="1.2"/><circle cx="2.5" cy="7"  r="1.2"/><circle cx="7.5" cy="7"  r="1.2"/><circle cx="2.5" cy="12" r="1.2"/><circle cx="7.5" cy="12" r="1.2"/></svg>';
     header.appendChild(handle);
     if (!meta.noTitle) {
       const h = document.createElement("h3");
+      h.className = "detail-section__title";
       h.textContent = meta.title;
       header.appendChild(h);
     }
     if (meta.extraHeader) {
       const ex = document.createElement("span");
-      ex.className = "section-extra";
+      ex.className = "section-extra detail-section__actions";
       ex.innerHTML = meta.extraHeader;
       header.appendChild(ex);
     }
     sec.appendChild(header);
 
     const body = document.createElement("div");
-    body.className = "pane-section-body";
+    body.className = "pane-section-body detail-section__body";
     body.appendChild(bodyDom);
     sec.appendChild(body);
 
@@ -863,55 +891,89 @@
     return lines.join(",\n\n");
   }
 
-  // セクション本体だけを返す (タイトルは buildSection 側で h3 を付ける)
+  // セクション本体だけを返す (タイトルは buildSection 側で h3 を付ける)。
+  // Claude Design 仕様に合わせて、プロンプトはカンマ区切りトークンを
+  // 1 つずつ .prompt-token チップとして並べ、_classifyPromptToken の結果を
+  // data-cat に載せてカテゴリ別の下線色で読み分けできるようにする。
   function promptBlockBody(title, text) {
     const wrap = document.createElement("div");
+    const isNeg = /negative/i.test(title);
+    let currentText = text || "";
 
-    const pre = document.createElement("pre");
-    pre.textContent = text || "(なし)";
-    // Negative はデフォルト縦幅を Positive の約半分にする (Positive 260px / Negative 130px)
-    if (/negative/i.test(title)) {
-      pre.classList.add("prompt-negative");
-    }
-    // ボタン bar は pre より上 (= セクションヘッダのすぐ下) に置きたいので
-    // wrap への append 順は: bar → pre とする。bar は text が空なら付かない。
+    const row = document.createElement("div");
+    row.className = "prompt-token-row" + (isNeg ? " prompt-token-row--neg" : "");
+
+    const renderTokens = () => {
+      row.innerHTML = "";
+      if (!currentText.trim()) {
+        const empty = document.createElement("span");
+        empty.className = "prompt-empty";
+        empty.textContent = "(なし)";
+        row.appendChild(empty);
+        return;
+      }
+      // 改行で区切られた行ごとに処理。"// label" 行は並び替え後のカテゴリ見出しなので
+      // セクション区切りラベルとして挟む。それ以外は ',' で割ってトークン化。
+      const lines = currentText.split(/\n+/);
+      for (const lineRaw of lines) {
+        const line = lineRaw.trim();
+        if (!line) continue;
+        if (line.startsWith("//")) {
+          const lab = document.createElement("span");
+          lab.className = "prompt-token-section";
+          lab.textContent = line.replace(/^\/\/\s*/, "");
+          row.appendChild(lab);
+          continue;
+        }
+        const toks = line.split(",").map(t => t.trim()).filter(t => t.length);
+        for (const t of toks) {
+          const span = document.createElement("span");
+          span.className = "prompt-token";
+          span.textContent = t;
+          const cat = _classifyPromptToken(t);
+          if (cat && cat !== "unknown") span.dataset.cat = cat;
+          if (_isLoraToken(t)) span.dataset.cat = "lora";
+          row.appendChild(span);
+        }
+      }
+    };
 
     if (text) {
-      // ボタン群は 1 つの bar にまとめてレイアウト統一
       const bar = document.createElement("div");
       bar.className = "prompt-btn-bar";
 
       const copyBtn = document.createElement("button");
-      copyBtn.className = "copy-btn btn-sub";
+      copyBtn.className = "copy-btn btn btn--sub";
       copyBtn.textContent = "コピー";
       copyBtn.title = "現在表示中のテキストをクリップボードへ";
       copyBtn.onclick = async () => {
-        // 並び替え後ならその表示テキストをコピー、そうでなければ元テキスト
-        await navigator.clipboard.writeText(pre.textContent || "");
+        await navigator.clipboard.writeText(currentText || "");
         setStatus(`${title} をクリップボードにコピーしました`);
       };
       bar.appendChild(copyBtn);
 
       const sortBtn = document.createElement("button");
-      sortBtn.className = "sort-btn btn-sub";
+      sortBtn.className = "sort-btn btn btn--sub";
       sortBtn.textContent = "並べ替え";
       sortBtn.title = "カテゴリ別に並び替えて表示（ファイルは更新しません）";
 
       const undoBtn = document.createElement("button");
-      undoBtn.className = "undo-btn btn-sub";
+      undoBtn.className = "undo-btn btn btn--sub";
       undoBtn.textContent = "戻る";
       undoBtn.title = "並び替え前の表示に戻す";
       undoBtn.disabled = true;
 
       sortBtn.onclick = () => {
         const sorted = sortPromptText(text);
-        if (!sorted || sorted === pre.textContent) return;
-        pre.textContent = sorted;
+        if (!sorted || sorted === currentText) return;
+        currentText = sorted;
+        renderTokens();
         undoBtn.disabled = false;
         sortBtn.disabled = true;
       };
       undoBtn.onclick = () => {
-        pre.textContent = text;
+        currentText = text;
+        renderTokens();
         undoBtn.disabled = true;
         sortBtn.disabled = false;
       };
@@ -921,16 +983,18 @@
 
       // ★ お気に入りに追加: 現在の Positive + Negative をペアで保存
       const favBtn = document.createElement("button");
-      favBtn.className = "fav-add-btn btn-sub";
+      favBtn.className = "fav-add-btn btn btn--sub";
       favBtn.textContent = "★ お気に入りに追加";
       favBtn.title = "Positive と Negative をペアで保存";
       favBtn.onclick = () => openFavoriteEditDialogForCurrent();
       bar.appendChild(favBtn);
 
-      // ボタン行を pre より先に置く (セクションタイトルとプロンプト本文の間に表示)
+      // ボタン行はチップ行より上 (= セクションタイトルとプロンプト本文の間)
       wrap.appendChild(bar);
     }
-    wrap.appendChild(pre);
+
+    renderTokens();
+    wrap.appendChild(row);
     return wrap;
   }
 
@@ -1104,19 +1168,26 @@
   }
 
   function renderTagFilter() {
-    const chips = $("#tagFilterChips");
-    chips.innerHTML = "";
+    // チップ入力欄は <input> と <datalist> を内包する .chip-input。
+    // 既存の .chip だけ取り除いて再生成し、input は触らない。
+    const chipsBox = $("#tagFilterChips");
+    chipsBox.querySelectorAll(".chip").forEach(c => c.remove());
+    const inputEl = $("#tagFilterInput");
     for (const t of state.filterTags) {
       const c = document.createElement("span");
       c.className = "chip";
-      c.innerHTML = `${escapeHtml(t)}<span class="x">×</span>`;
-      c.querySelector(".x").onclick = () => {
+      c.dataset.tag = t;
+      c.innerHTML =
+        `${escapeHtml(t)}<button type="button" class="chip__close" aria-label="タグ削除">` +
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>`;
+      c.querySelector(".chip__close").onclick = () => {
         state.filterTags = state.filterTags.filter(x => x !== t);
         renderTagFilter();
         savePrefs();
         reloadImages();
       };
-      chips.appendChild(c);
+      // input の直前に挿入してチップが先頭側に並ぶようにする
+      chipsBox.insertBefore(c, inputEl);
     }
     // datalist (オートコンプリート候補) は既存タグ全件を入れる
     const dl = $("#tagFilterDatalist");
@@ -1419,6 +1490,25 @@
     });
   }
 
+  // グリッドの空き領域 (タイル以外) クリックで選択を解除する。
+  // タイル自身のクリックは onCellClick が ev.stopPropagation を呼ばない代わりに
+  // ev.target.closest(".tile") でフィルタして二重発火を避ける。
+  function setupGridBackgroundClick() {
+    const grid = $("#grid");
+    if (!grid) return;
+    grid.addEventListener("click", (ev) => {
+      // タイル内のクリックなら何もしない (onCellClick が処理する)
+      if (ev.target.closest(".tile")) return;
+      // 既に何も選択されていなければ何もしない
+      if (state.selected.size === 0 && state.lastClickedId == null) return;
+      state.selected.clear();
+      state.lastClickedId = null;
+      refreshDetail();
+      renderGrid();
+      renderRightPane();
+    });
+  }
+
   // ---------------- SSE ----------------
   function startEventStream() {
     const es = new EventSource("/api/events");
@@ -1511,6 +1601,11 @@
     const SIZE_MIN = parseInt(slider.min, 10) || 80;
     const SIZE_MAX = parseInt(slider.max, 10) || 512;
 
+    const updateSliderFill = () => {
+      const pct = ((slider.value - SIZE_MIN) / (SIZE_MAX - SIZE_MIN)) * 100;
+      slider.style.setProperty("--_val", `${pct}%`);
+    };
+
     const applySize = (raw, { commit }) => {
       // 連続変更中は CSS だけ更新、commit=true でサムネ再フェッチ + 保存
       let v = parseInt(raw, 10);
@@ -1520,15 +1615,14 @@
       slider.value = v;
       // フォーカス中の number input は触らない (タイプ中の値を奪わない)
       if (document.activeElement !== numInput) numInput.value = v;
-      $("#grid").style.setProperty("--thumb-w", `${v}px`);
-      document.querySelectorAll(".cell").forEach(c => {
-        c.style.setProperty("--thumb-w", `${v}px`);
-      });
+      $("#grid").style.setProperty("--thumb-size", `${v}px`);
+      updateSliderFill();
       if (commit) {
         renderGrid();
         savePrefs();
       }
     };
+    updateSliderFill();
 
     slider.oninput = (e) => applySize(e.target.value, { commit: false });
     slider.onchange = (e) => applySize(e.target.value, { commit: true });
@@ -1783,6 +1877,7 @@
     setupSplitter();
     setupLightbox();
     setupHelpBanner();
+    setupGridBackgroundClick();
   }
 
   async function init() {
