@@ -107,10 +107,21 @@ def _index_one(folder_id: int, file_path: Path) -> dict[str, Any] | None:
 
 
 def full_scan(folder_id: int, folder_path: str) -> int:
-    """指定フォルダを 1 回フルスキャンし、追加/更新件数を返す。"""
+    """指定フォルダを 1 回フルスキャンし、追加/更新件数を返す。
+
+    完了時に `folder_rescanned` SSE イベントを emit する。watchdog の取り逃がし分
+    (再スキャン時に増減した画像) をフロントに通知し、UI のグリッドを reload させる
+    ためのフック。
+    """
     folder = Path(folder_path)
     if not folder.exists():
         log.warning("監視フォルダが存在しません: %s", folder)
+        # フォルダが消えていても、フロントが「再スキャン完了」状態に遷移できるよう通知する
+        manager._emit(ScanEvent(
+            type="folder_rescanned",
+            folder_id=folder_id,
+            payload={"added_or_updated": 0, "missing_folder": True},
+        ))
         return 0
 
     # 現在ディスク上にあるファイル
@@ -123,18 +134,31 @@ def full_scan(folder_id: int, folder_path: str) -> int:
                 count += 1
 
     # DB にあるけれど消えたファイルを掃除
+    removed = 0
     conn = connect()
     try:
         for db_path in repo.list_image_paths_in_folder(conn, folder_id):
             if db_path not in on_disk:
                 repo.delete_image_by_path(conn, db_path)
+                removed += 1
     finally:
         conn.close()
 
     # プロンプトオートコンプリート用のキャッシュを次回参照時に再構築
     repo.invalidate_prompt_tag_index()
 
-    log.info("フルスキャン完了: folder_id=%s, %d 件", folder_id, count)
+    log.info(
+        "フルスキャン完了: folder_id=%s, %d 件 (削除 %d 件)",
+        folder_id, count, removed,
+    )
+
+    # フロント (SSE 購読側) に再スキャン完了を通知。フロントは reloadImages() で
+    # 一覧を取り直す
+    manager._emit(ScanEvent(
+        type="folder_rescanned",
+        folder_id=folder_id,
+        payload={"added_or_updated": count, "removed": removed},
+    ))
     return count
 
 

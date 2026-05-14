@@ -230,11 +230,10 @@
   async function rescanCurrentFolder() {
     if (state.currentFolderId == null) return;
     setStatus("再スキャン中...");
+    // サーバはバックグラウンドで full_scan を回し、完了時に SSE `folder_rescanned`
+    // を emit する。受信側で reloadImages() + reloadFolders() を実行するため、
+    // ここでは追加の reload は不要 (固定 setTimeout に頼らないようにする)。
     await api(`/api/folders/${state.currentFolderId}/rescan`, { method: "POST" });
-    setTimeout(async () => {
-      await reloadFolders();
-      setStatus("再スキャン完了");
-    }, 1500);
   }
 
   // ---------------- 画像一覧 ----------------
@@ -1527,6 +1526,25 @@
         if (data.folder_id === state.currentFolderId) {
           reloadImages();
           reloadFolders();
+        }
+      } catch {}
+    });
+    // 再スキャン完了: full_scan は watchdog が取り逃した追加/削除も同期するので、
+    // 現在表示中フォルダなら一覧を取り直す。フォルダ自体の image_count も更新。
+    es.addEventListener("folder_rescanned", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.folder_id === state.currentFolderId) {
+          reloadImages();
+        }
+        reloadFolders();
+        const p = data.payload || {};
+        const added = p.added_or_updated ?? 0;
+        const removed = p.removed ?? 0;
+        if (p.missing_folder) {
+          setStatus("再スキャン: 対象フォルダが見つかりませんでした");
+        } else {
+          setStatus(`再スキャン完了 (追加/更新 ${added} 件, 削除 ${removed} 件)`);
         }
       } catch {}
     });
