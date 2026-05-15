@@ -105,6 +105,13 @@
   const $ = (sel) => document.querySelector(sel);
   const setStatus = (msg) => { $("#statusBar").textContent = msg || ""; };
 
+  // ComfyUI Desktop (Electron) への D&D は OS 経由になり、ブラウザ内 JS で
+  // dataTransfer.items.add(file) しても OS ペイロードには載らない。
+  // 一方、新タブで画像を開いてドラッグすると Chromium が <img> の表示画像を
+  // ローカル一時ファイル化して OS に渡す特権を使い、Electron 側で File として
+  // 受け取れる (A の検証で確認済)。これと同じ経路に乗せるため、
+  // サムネ <img> を hover で元 PNG (preview URL) にロード切替する方式を採用。
+
   async function api(path, opts = {}) {
     const res = await fetch(path, {
       headers: { "Content-Type": "application/json" },
@@ -118,7 +125,8 @@
   }
 
   function snapThumbW(w) {
-    const steps = [128, 192, 256, 384, 512];
+    // サーバ側 THUMB_STEPS と同期させる必要あり (config.py)
+    const steps = [192, 288, 384, 576, 768];
     let best = steps[0];
     let bestDiff = Infinity;
     for (const s of steps) {
@@ -265,7 +273,10 @@
     const g = $("#grid");
     g.innerHTML = "";
     const w = state.thumbW;
-    const reqW = snapThumbW(w);
+    // HiDPI ディスプレイ (Retina / Windows 拡大率 150%+) では物理 px を上げて
+    // クッキリ描画。離散段は 192/288/384/576/768 で頭打ちになるので 2 倍まで。
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const reqW = snapThumbW(Math.round(w * dpr));
     g.style.setProperty("--thumb-size", `${w}px`);
 
     for (const img of state.images) {
@@ -285,8 +296,19 @@
 
       const i = document.createElement("img");
       i.loading = "lazy";
-      i.src = `/api/images/${img.id}/thumb?w=${reqW}&v=${img.sha1.slice(0, 8)}`;
+      const thumbUrl = `/api/images/${img.id}/thumb?w=${reqW}&v=${img.sha1.slice(0, 8)}`;
+      const previewUrl = `/api/images/${img.id}/preview?v=${img.sha1.slice(0, 8)}`;
+      i.src = thumbUrl;
       i.alt = img.filename;
+      // ComfyUI Desktop への D&D 対応: <img> を draggable にしておき、
+      // hover で src を preview URL (元 PNG / workflow メタデータ込み) に
+      // 切り替える。Chromium が表示画像をローカルファイル化して OS に渡すので、
+      // Electron 側 ComfyUI が File として受け取り workflow を復元できる。
+      // CSS は object-fit: cover 固定なのでアスペクト比が同じ preview と
+      // 入れ替わってもレイアウトは崩れない。Cache-Control で再 fetch も抑止。
+      i.draggable = true;
+      i.dataset.thumbSrc = thumbUrl;
+      i.dataset.previewSrc = previewUrl;
       thumb.appendChild(i);
 
       // 選択チェックマーク (hover or 選択中に表示)
@@ -306,6 +328,19 @@
       // 下部の独立した枠は冗長なので外している。
 
       tile.addEventListener("click", (ev) => onCellClick(ev, img.id));
+
+      // ComfyUI Desktop への D&D 経路: hover で <img>.src を preview URL に
+      // 切り替え、Chromium が元 PNG を OS ドラッグペイロードに乗せられる状態に。
+      // pointerleave で thumb URL に戻すとメモリ節約になるが、ドラッグ確定後の
+      // ホバー解除で src が thumb に戻ると OS が掴むファイルがブレるリスクが
+      // あるため戻さない。Cache-Control + ブラウザキャッシュで再表示時の負担は
+      // 軽い。pointerenter は once 指定で 1 度だけ実行。
+      tile.addEventListener("pointerenter", () => {
+        if (i.src !== previewUrl && i.dataset.previewSrc) {
+          i.src = i.dataset.previewSrc;
+        }
+      }, { once: true });
+
       g.appendChild(tile);
     }
 

@@ -28,8 +28,10 @@ DANBOORU_TRANSLATION_DIR = DATA_DIR / "danbooru_translations"
 HOST = os.environ.get("CIO_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CIO_PORT", "8765"))
 
-# サムネ離散段 (px)
-THUMB_STEPS: tuple[int, ...] = (128, 192, 256, 384, 512)
+# サムネ離散段 (px) ─ 旧 (128,192,256,384,512) を 1.5 倍化して画質向上。
+# 192 のみ旧値と重複するが生成パラメータ (quality=82, method=4) が同一なので
+# 既存キャッシュを安全に再利用できる。それ以外の旧キャッシュは参照されなくなる。
+THUMB_STEPS: tuple[int, ...] = (192, 288, 384, 576, 768)
 
 # 対象拡張子
 IMAGE_EXTS: tuple[str, ...] = (".png",)

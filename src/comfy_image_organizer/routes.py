@@ -292,7 +292,16 @@ def get_preview(image_id: int, conn=Depends(get_conn)) -> FileResponse:
     p = Path(r["path"])
     if not p.exists():
         raise HTTPException(status_code=410, detail="ファイルが消えています")
-    return FileResponse(p, media_type="image/png")
+    # CORS は main.py の CORSMiddleware で全 API に対し許可済み
+    # (ComfyUI のブラウザからの D&D 用 fetch を成立させるため)。
+    # Cache-Control: ComfyUI Desktop への D&D 経路ではサムネ <img> の src を
+    # hover で preview URL に切り替えるため、毎回再 fetch されないよう短期キャッシュを許可。
+    # sha1 ベースのキャッシュバスター付き URL なので画像更新時は別 URL となる。
+    return FileResponse(
+        p,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.get("/api/images/{image_id}/thumb")

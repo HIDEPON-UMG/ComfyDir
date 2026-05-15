@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -65,6 +66,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ComfyDir", lifespan=lifespan)
+
+# CORS: ComfyUI (例: http://127.0.0.1:8188) のブラウザから本サーバの
+# /api/images/{id}/preview を fetch してワークフロー復元 (D&D 経由) する
+# ために、ローカルからの cross-origin GET を許可する。
+# ComfyUI の eventUtils.ts は fetch エラー時に空配列を握り潰して何も
+# 起こさないため、ここで preflight 含めて確実に通す必要がある。
+# 読み取り専用 + 127.0.0.1 バインドのみなので影響範囲は限定的。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "HEAD", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 # 静的ファイル
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

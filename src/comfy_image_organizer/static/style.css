@@ -733,6 +733,10 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border-subtle);
+  /* tile を draggable=true にしているのでテキスト選択ハイライトを抑制
+     (ドラッグ中にキャプション等が選択されるのを防ぎ、ComfyUI への D&D を安定させる) */
+  user-select: none;
+  -webkit-user-select: none;
   transition: transform var(--motion-duration-fast) var(--motion-ease),
               border-color var(--motion-duration-fast) var(--motion-ease),
               box-shadow var(--motion-duration-fast) var(--motion-ease);
