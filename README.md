@@ -276,6 +276,7 @@ ComfyImageOrganizer/
 ├── run.py                 # 直接起動エントリ
 ├── requirements.txt
 ├── README.md
+├── DESIGN.md             # デザイントークン + トンマナ仕様 (一次ソースは static/style.css の :root)
 ├── LICENSE
 ├── assets/
 │   └── app.ico            # アプリアイコン (マルチサイズ ICO)
