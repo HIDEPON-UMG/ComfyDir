@@ -1,0 +1,37 @@
+{
+  "name": "ComfyDir - ComfyUI image & prompt organizer",
+  "short_name": "ComfyDir",
+  "description": "ComfyUI 出力 PNG とプロンプトをローカルで整理するための画像オーガナイザ。",
+  "id": "/?source=pwa",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "theme_color": "#56C6E3",
+  "background_color": "#1A1B1F",
+  "lang": "ja",
+  "dir": "ltr",
+  "categories": ["productivity", "utilities", "graphics"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

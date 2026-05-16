@@ -2,6 +2,76 @@
 // 状態管理は単純なグローバルオブジェクト + 必要時に DOM を再描画。
 // UI 状態 (フォルダ選択 / サイズ / ソート / フィルタ / ペイン幅) は localStorage に永続化。
 
+// ---------------- PWA: Service Worker 登録 ----------------
+// IIFE の外側で登録しておくと、サーバ未起動でブラウザを直接開いた場合でも
+// 既存の SW が offline.html フォールバックを返せる。
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/", updateViaCache: "none" })
+      .catch((err) => {
+        // console.warn だけ。SW 登録失敗でも本体機能は動く。
+        console.warn("[ComfyDir] Service Worker 登録失敗:", err);
+      });
+  });
+}
+
+// ---------------- PWA: インストール導線 ----------------
+// Chromium 系は `beforeinstallprompt` を発火する。一度 sessionStorage に "installed"
+// を保存すれば再来時はボタンを出さない (Edge スタンドアロン起動でも安心)。
+(() => {
+  let deferredPrompt = null;
+
+  function hideButton() {
+    const btn = document.getElementById("btnInstall");
+    if (btn) btn.hidden = true;
+  }
+
+  // インストール済 (Chrome/Edge スタンドアロン or sessionStorage マーク) ならボタン出さない
+  function alreadyInstalled() {
+    if (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) {
+      return true;
+    }
+    try { return sessionStorage.getItem("cio.installed") === "1"; }
+    catch { return false; }
+  }
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    if (alreadyInstalled()) return;
+    deferredPrompt = e;
+    const btn = document.getElementById("btnInstall");
+    if (btn) btn.hidden = false;
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredPrompt = null;
+    try { sessionStorage.setItem("cio.installed", "1"); } catch {}
+    hideButton();
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("btnInstall");
+    if (!btn) return;
+    if (alreadyInstalled()) { hideButton(); return; }
+    btn.addEventListener("click", async () => {
+      if (!deferredPrompt) return;
+      btn.disabled = true;
+      try {
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        if (choice && choice.outcome === "accepted") {
+          try { sessionStorage.setItem("cio.installed", "1"); } catch {}
+          hideButton();
+        }
+      } finally {
+        deferredPrompt = null;
+        btn.disabled = false;
+      }
+    });
+  });
+})();
+
 (() => {
   // ---------------- 永続化 ----------------
   const PREF_KEY = "cio.prefs.v1";

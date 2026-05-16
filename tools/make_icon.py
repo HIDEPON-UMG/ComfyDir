@@ -10,7 +10,8 @@ Claude Design 刷新後のブランドマーク (重なった角丸フレーム 
 4. 前面上のジグザグ折れ線: 山並み (濃色 35% 透過)
 
 使い方:
-    .venv/Scripts/python.exe tools/make_icon.py
+    .venv/Scripts/python.exe tools/make_icon.py          # ICO のみ生成
+    .venv/Scripts/python.exe tools/make_icon.py --png    # ICO に加えて PWA 用 PNG 192/512 も生成
 
 タスクバー固定中のショートカットがある場合、Windows のアイコンキャッシュが
 古いままになることがあるので、必要に応じてピン留め解除→再固定するか、
@@ -18,11 +19,32 @@ Claude Design 刷新後のブランドマーク (重なった角丸フレーム 
 """
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
-OUT_PATH = Path(__file__).resolve().parents[1] / "assets" / "app.ico"
+ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+OUT_PATH = ASSETS_DIR / "app.ico"
+# PWA manifest 用の PNG。manifest 上の宣言サイズ (192, 512) に対し、
+# 実 PNG は 2 倍解像度で出力する。HiDPI 環境 (DPR 1.5+) でも鮮明に描画される。
+# 出力タプル: (declared_size, actual_pixels)
+PNG_SIZES: tuple[tuple[int, int], ...] = (
+    (192, 384),
+    (512, 1024),
+)
+
+# favicon / タスクバー固定用 PNG。Chrome `--app=` 起動時のタイトルバー / タスクバー
+# 描画は `<link rel="icon" sizes="X">` 宣言の X と一致する PNG を採用するため、
+# **ファイル名と sizes 属性と実体ピクセルは厳密に一致**させる必要がある。
+# (前回 declared=32 / actual=64 でファイル名を declared にしたところ、Chrome が
+#  32x32 として 64px を縮小描画し、アンチエイリアスが甘くなって NZXT/Anima 並びで
+#  明らかに荒く見えるバグが出た)。
+FAVICON_PIXEL_SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 96, 128, 192, 256)
+# ICO に焼く解像度。Windows タスクバーは DPI 100% で 32 / 125% で 40 / 150% で 48 等を
+# 引くので、16-256 を網羅しておくと縮小ぼけが出ない。各サイズを **独立レンダリング**
+# する (Pillow の append_images) ことで、256→32 自動ダウンサンプルの劣化を回避。
+ICO_PIXEL_SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)
 
 # 新ブランドカラー (favicon.svg と同じ hex)
 STROKE_GRAY    = (196, 196, 201, 255)  # 背面フレーム枠線
@@ -115,15 +137,50 @@ def make_icon(size: int = 256) -> Image.Image:
 
 
 def main() -> None:
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    big = make_icon(256)
-    # Windows は 16/32/48 を主に使うが、Hi-DPI 対応で 256/128/64 も入れておく
-    big.save(
+    parser = argparse.ArgumentParser(description="ComfyDir アプリアイコンを生成")
+    parser.add_argument(
+        "--png",
+        action="store_true",
+        help="ICO に加えて PWA manifest 用の icon-192.png / icon-512.png も出力",
+    )
+    args = parser.parse_args()
+
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ICO: 各サイズを独立にレンダリングして append_images で渡すと、Pillow が
+    # 256→32 等の自動ダウンサンプルではなく **各サイズで再描画した PNG** を ICO に格納する。
+    # base は最大サイズ (256) にする (sizes より小さい base に大きい append_images を
+    # 渡すと Pillow が "scaled down 候補" として弾くため、ICO に格納されない解像度ができる)。
+    ico_sizes_desc = tuple(sorted(ICO_PIXEL_SIZES, reverse=True))
+    ico_images_desc = [make_icon(sz) for sz in ico_sizes_desc]
+    ico_images_desc[0].save(
         OUT_PATH,
         format="ICO",
-        sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)],
+        sizes=[(s, s) for s in ico_sizes_desc],
+        append_images=ico_images_desc[1:],
     )
     print(f"wrote {OUT_PATH} ({OUT_PATH.stat().st_size:,} bytes)")
+
+    if args.png:
+        # manifest icons: 192 / 512 を **実体ピクセルで** 出力する。
+        # 「declared=192, actual=384」のような不一致は HTML/PWA 仕様に反するので止める。
+        for declared, actual in PNG_SIZES:
+            png_path = ASSETS_DIR / f"icon-{declared}.png"
+            make_icon(declared).save(png_path, format="PNG", optimize=True)
+            print(
+                f"wrote {png_path} ({declared}×{declared} px, "
+                f"{png_path.stat().st_size:,} bytes)"
+            )
+        # favicon: ファイル名 = sizes 属性 = 実体ピクセルで一致させる。
+        # Chrome は `<link rel="icon" sizes="X">` の X と最近接の解像度を採用するので、
+        # 16/24/32/48/64/96/128/192/256 を網羅して縮小ぼけを抑える。
+        for size in FAVICON_PIXEL_SIZES:
+            png_path = ASSETS_DIR / f"favicon-{size}.png"
+            make_icon(size).save(png_path, format="PNG", optimize=True)
+            print(
+                f"wrote {png_path} ({size}×{size} px, "
+                f"{png_path.stat().st_size:,} bytes)"
+            )
 
 
 if __name__ == "__main__":

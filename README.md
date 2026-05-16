@@ -135,11 +135,11 @@ python -m venv .venv
 
 | 方法 | 用途 | 動作 |
 | --- | --- | --- |
-| `start.vbs` をダブルクリック | 普段使い（推奨） | コンソール窓なしで起動。ブラウザが自動で開く |
-| `start.bat` をダブルクリック | デバッグ | コンソール窓ありで起動。終了後 `pause` で待機 |
-| `python run.py` | 開発時 | 通常の Python 実行（venv をアクティベート済みなら） |
+| `start.vbs` をダブルクリック | 普段使い（推奨） | `launcher.py` をコンソール窓なしで起動。タスクトレイにアイコン常駐し、クリックで **Chrome → Edge** の順に検出して **専用プロファイル** (`%LocalAppData%\ComfyDir\ChromeProfile`) で **`--new-window`** 起動 (`http://127.0.0.1:8765`)。2 回目以降のクリックは既存ウィンドウを前面化 |
+| `start.bat` をダブルクリック | デバッグ | コンソール窓ありで `run.py` (uvicorn 直起動) を実行。タスクトレイは出ない |
+| `python run.py` | 開発時 | uvicorn を foreground 起動（既定ブラウザで自動オープン）。tray は使わない |
 
-ブラウザは自動で `http://127.0.0.1:8765` を開きます（環境によっては手動で開く）。
+ブラウザは自動で `http://127.0.0.1:8765` を開きます。tray アイコンを右クリック → 「終了」で uvicorn 含めて全て停止できます。
 
 ---
 
@@ -148,8 +148,8 @@ python -m venv .venv
 Windows のタスクバーは `.vbs` を直接固定できないので、**アイコン付き専用ショートカット (`.lnk`) を作ってからタスクバーに固定**します。
 
 ```bash
-# アイコン (assets/app.ico) を生成（一度だけ）
-.venv/Scripts/python.exe tools/make_icon.py
+# アイコン (assets/app.ico + PWA 用 icon-192/512.png) を生成（一度だけ）
+.venv/Scripts/python.exe tools/make_icon.py --png
 
 # ショートカット ComfyDir.lnk をプロジェクトルートに生成（一度だけ）
 wscript tools/create_shortcut.vbs
@@ -162,6 +162,44 @@ wscript tools/create_shortcut.vbs
 3. **「タスクバーにピン留めする」** をクリック
 
 以後、タスクバーのアイコンをワンクリックするだけで起動できます（`.lnk` は `.gitignore` 済み）。
+
+---
+
+## PWA としてインストール (推奨)
+
+ComfyDir は Progressive Web App として提供されており、Chromium 系ブラウザ (Chrome / Edge) から **アプリとしてインストール** できます。インストールするとスタートメニュー・タスクバーに ComfyDir 専用エントリが現れ、**独自アイコン付きのスタンドアロンウィンドウ** で起動します。
+
+> **注意**: launcher (start.vbs) は **通常ウィンドウ** で起動します (`--new-window URL`)。当初検討した `--app=URL` モードは Chrome 仕様で `beforeinstallprompt` イベントを発火させないため、画面内インストールボタンが機能しなくなることが判明したので不採用としました。**通常ウィンドウからインストール → スタンドアロン起動** の二段構えになっています。
+
+### インストール手順
+
+1. `start.vbs` で ComfyDir を起動 (タスクトレイ常駐 + Chrome の通常ウィンドウが開く)
+2. ウィンドウ右上のツールバーに表示される **「インストール」ボタン** をクリック (またはアドレスバー右の "アプリとしてインストール" アイコンを使う)
+3. ダイアログで「インストール」を選択
+4. インストール完了後、スタートメニュー / タスクバーピン留めの **「ComfyDir」** から起動 → 独自アイコン + standalone モード
+
+### 専用 Chrome プロファイルについて
+
+launcher が起動する Chrome は **ComfyDir 専用プロファイル** (`%LocalAppData%\ComfyDir\ChromeProfile`) を使うため、普段使いの Chrome (Google ログイン状態・ブックマーク・拡張機能) とは完全に独立しています。Google アカウントが未ログインなので、Chrome の **Profile Badging** (タスクバーアイコン右下のアカウントアバターオーバーレイ) は表示されず、ComfyDir のアイコンがクリーンに表示されます。
+
+専用プロファイルをリセットしたい場合は、上記ディレクトリをフォルダごと削除してから再起動してください。
+
+### オフライン挙動
+
+Service Worker (`/sw.js`) が静的アセット (`index.html` / `style.css` / `app.js` / アイコン / `manifest.json`) を precache します。サーバが落ちている状態でブラウザのリロードを叩くと、フォールバック画面 (`/offline.html`) が表示され、起動手順を案内します。
+
+### タスクトレイ運用 vs PWA インストール
+
+| 方式 | 起動経路 | メリット |
+| --- | --- | --- |
+| **タスクトレイ launcher** (start.vbs) | 自動起動も可。1 クリックでウィンドウ前面化 | uvicorn + ウィンドウ管理が一体。終了も tray から一発 |
+| **PWA インストール** | スタートメニュー / タスクバー | OS から「アプリ」として見える。スタンドアロンウィンドウ |
+
+両者は併用できます。**先にタスクトレイ launcher を起動しておけば、PWA エントリを起動したときにも同じバックエンドに接続** されます。逆に、PWA エントリ単独で起動する場合は事前に `start.vbs` でサーバを立ち上げてください (サーバ未起動だと `offline.html` が出ます)。
+
+### サムネ等のキャッシュ更新
+
+`app.js` / `style.css` を改修した後にブラウザに最新版を取り直させたいときは、`src/comfy_image_organizer/static/sw.js` 冒頭の `const VERSION = "vN"` をインクリメントしてサーバ再起動 → リロードしてください。`activate` イベントで古い `comfydir-*` cache が自動的に消えます。
 
 ---
 

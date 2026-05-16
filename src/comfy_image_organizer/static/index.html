@@ -2,11 +2,30 @@
 <html lang="ja" data-theme="dark">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#56C6E3" />
+  <meta name="color-scheme" content="dark" />
   <title>ComfyDir</title>
   <!-- 新ブランドマークの SVG favicon (Chromium/Firefox 系で優先採用される) -->
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <!-- Chrome `--app=` のタイトルバー / タスクバーアイコンはここから sizes 一致で引く。
+       SVG のラスタライズ品質が落ちる小サイズ (16-64) を PNG で明示する。
+       ファイル名と sizes 属性と実体ピクセルは厳密に一致させる (不一致だと縮小ぼけが出る)。 -->
+  <link rel="icon" type="image/png" sizes="16x16"   href="/assets/favicon-16.png" />
+  <link rel="icon" type="image/png" sizes="24x24"   href="/assets/favicon-24.png" />
+  <link rel="icon" type="image/png" sizes="32x32"   href="/assets/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="48x48"   href="/assets/favicon-48.png" />
+  <link rel="icon" type="image/png" sizes="64x64"   href="/assets/favicon-64.png" />
+  <link rel="icon" type="image/png" sizes="96x96"   href="/assets/favicon-96.png" />
+  <link rel="icon" type="image/png" sizes="128x128" href="/assets/favicon-128.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/favicon-192.png" />
+  <link rel="icon" type="image/png" sizes="256x256" href="/assets/favicon-256.png" />
   <!-- 古いブラウザ・タスクバー固定用のフォールバック (assets/app.ico を流用) -->
   <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+  <!-- PWA manifest と Apple touch icon -->
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/assets/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="512x512" href="/assets/icon-512.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -137,13 +156,27 @@
         </div>
       </div>
 
-      <!-- Right column -->
+      <!-- Right column: center の 2 行 (Row 1 / Row 2) と高さを揃えて縦に積む -->
       <div class="toolbar__right">
-        <div style="display:flex; gap:var(--space-3); align-items:center;">
-          <button id="helpReopen" class="btn btn--ghost btn--icon" title="使い方を表示" aria-label="ヘルプ" hidden>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <!-- Row 1 と同じ高さ: インストール (PWA) -->
+        <div class="toolbar__right-row">
+          <button id="btnInstall" class="btn btn--primary btn--compact"
+                  title="PC に ComfyDir をインストール (PWA)" hidden>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            インストール
           </button>
-          <button id="btnFavoritesToggle" class="btn btn--toggle"
+        </div>
+        <!-- Row 2 と同じ高さ: ヘルプ + お気に入り -->
+        <div class="toolbar__right-row">
+          <button id="helpReopen" class="btn btn--ghost btn--icon btn--compact"
+                  title="使い方を表示" aria-label="ヘルプ" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </button>
+          <button id="btnFavoritesToggle" class="btn btn--toggle btn--compact"
                   title="お気に入りプロンプトの一覧を右ペインに表示" aria-pressed="false">
             <svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.95 6.6L22 9.7l-5.3 5 1.4 7.3L12 18.5 5.9 22l1.4-7.3L2 9.7l7.05-1.1z"/></svg>
             お気に入り

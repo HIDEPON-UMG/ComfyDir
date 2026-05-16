@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import scanner
-from .config import ICON_PATH, LOG_PATH, STATIC_DIR
+from .config import ASSETS_DIR, ICON_PATH, LOG_PATH, STATIC_DIR
 from .db import connect, init_schema
 from .routes import router
 
@@ -83,6 +83,8 @@ app.add_middleware(
 
 # 静的ファイル
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# PWA アイコン群 (icon-192.png / icon-512.png / app.ico) を /assets/* で配信
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 # API
 app.include_router(router)
@@ -97,3 +99,37 @@ def index() -> FileResponse:
 def favicon() -> FileResponse:
     """ブラウザのタブに表示されるアイコン (assets/app.ico を流用)。"""
     return FileResponse(ICON_PATH, media_type="image/x-icon")
+
+
+# ---------------- PWA ----------------
+
+@app.get("/manifest.json", include_in_schema=False)
+def manifest() -> FileResponse:
+    """PWA manifest。Chromium 系の install プロンプトが参照する。"""
+    return FileResponse(
+        STATIC_DIR / "manifest.json",
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker() -> FileResponse:
+    """Service Worker 本体。Service-Worker-Allowed: / で scope をルートに広げる。
+
+    `Cache-Control: no-cache` で SW 自体は常に最新を取りに行かせる
+    (古い sw.js が browser cache から返ると新 VERSION が反映されないため)。
+    """
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={
+            "Service-Worker-Allowed": "/",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+@app.get("/offline.html", include_in_schema=False)
+def offline_page() -> FileResponse:
+    """サーバ未起動時の fallback ページ (SW がキャッシュ済の HTML を返す)。"""
+    return FileResponse(STATIC_DIR / "offline.html", media_type="text/html")

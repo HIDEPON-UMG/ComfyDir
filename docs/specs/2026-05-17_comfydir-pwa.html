@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ComfyDir PWA 化 — 仕様書</title>
+  <style>
+    /* ============================================================
+       DESIGN.md トークン (ComfyDir ダーク + Cyan-blue)
+       同期元: ComfyImageOrganizer/DESIGN.md
+       Hex は OKLCH の sRGB 近似値
+       ============================================================ */
+    :root {
+      --color-bg-base:      #1A1B1F;
+      --color-bg-surface:   #232428;
+      --color-bg-elevated:  #2D2E33;
+      --color-bg-inset:     #1E1F23;
+      --color-fg-primary:   #F4F4F6;
+      --color-fg-secondary: #BFC0C5;
+      --color-fg-muted:     #888A91;
+      --color-fg-on-accent: #1A1B1F;
+      --color-border:       #3D3F45;
+      --color-border-strong:#5A5C63;
+      --color-border-focus: #7BC9E6;
+      --color-accent:       #56C6E3;
+      --color-accent-hover: #82D6EC;
+      --color-accent-soft:  rgba(86, 198, 227, 0.16);
+      --color-success:      #5DBE83;
+      --color-warning:      #DCBC4A;
+      --color-error:        #E36C4F;
+      --color-cat-1:        #7CB6E8;
+      --color-cat-2:        #67C9B0;
+      --color-cat-3:        #D7C26B;
+      --color-cat-4:        #D77E6B;
+      --color-cat-5:        #C9A2D9;
+      --font-sans: Inter, 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+      --rounded-sm: 4px;
+      --rounded-md: 8px;
+      --rounded-lg: 12px;
+      --rounded-xl: 16px;
+      --rounded-full: 999px;
+      --space-xs:  2px;
+      --space-sm:  4px;
+      --space-md:  8px;
+      --space-lg:  12px;
+      --space-xl:  16px;
+      --space-2xl: 24px;
+      --space-3xl: 32px;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.32), 0 0 0 1px rgba(255,255,255,0.02) inset;
+      --shadow-lg: 0 16px 32px rgba(0,0,0,0.45);
+      --motion-duration-fast:   120ms;
+      --motion-duration-normal: 180ms;
+      --motion-easing:          cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--color-bg-base);
+      color: var(--color-fg-primary);
+      font-family: var(--font-sans);
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      letter-spacing: 0.005em;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container { max-width: 72rem; margin: 0 auto; padding: var(--space-3xl) var(--space-xl) calc(var(--space-3xl) * 2); }
+
+    .spec-header { padding-bottom: var(--space-2xl); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-2xl); }
+    .spec-eyebrow { color: var(--color-fg-muted); font-size: 0.6875rem; letter-spacing: 0.08em; font-weight: 500; text-transform: uppercase; }
+    h1 { font-size: 1.75rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.025em; margin: var(--space-md) 0 var(--space-sm); }
+    h2 { font-size: 1.125rem; font-weight: 600; line-height: 1.25; margin: 0 0 var(--space-md); }
+    h3 { font-size: 0.9375rem; font-weight: 600; line-height: 1.25; margin: var(--space-2xl) 0 var(--space-sm); color: var(--color-fg-primary); }
+    h4 { font-size: 0.8125rem; font-weight: 600; margin: var(--space-xl) 0 var(--space-sm); color: var(--color-fg-secondary); }
+    .lead { color: var(--color-fg-secondary); font-size: 0.9375rem; line-height: 1.6; margin: var(--space-sm) 0 var(--space-md); }
+
+    p { margin: 0 0 var(--space-md); }
+    a { color: var(--color-accent); text-decoration: none; }
+    a:hover { color: var(--color-accent-hover); text-decoration: underline; }
+
+    .tabs { display: flex; gap: var(--space-xs); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-2xl); overflow-x: auto; }
+    .tab { background: none; border: 0; padding: var(--space-md) var(--space-lg); font-family: var(--font-sans); font-size: 0.8125rem; color: var(--color-fg-secondary); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; transition: color var(--motion-duration-fast) var(--motion-easing); }
+    .tab:hover { color: var(--color-fg-primary); }
+    .tab.active { color: var(--color-fg-primary); border-bottom-color: var(--color-accent); font-weight: 600; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; animation: fade var(--motion-duration-normal) var(--motion-easing); }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .card { background: var(--color-bg-surface); border: 1px solid var(--color-border); border-radius: var(--rounded-lg); padding: var(--space-xl); box-shadow: var(--shadow-sm); }
+
+    .badge { display: inline-block; background: var(--color-accent-soft); color: var(--color-accent); border-radius: var(--rounded-full); padding: 2px 10px; font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.04em; }
+    .badge-success { background: rgba(93,190,131,0.18); color: var(--color-success); }
+    .badge-warning { background: rgba(220,188,74,0.18); color: var(--color-warning); }
+    .badge-error   { background: rgba(227,108,79,0.18); color: var(--color-error); }
+    .badge-neutral { background: var(--color-bg-elevated); color: var(--color-fg-secondary); }
+
+    table { width: 100%; border-collapse: collapse; margin: var(--space-md) 0; font-size: 0.8125rem; }
+    th, td { text-align: left; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); vertical-align: top; }
+    th { font-weight: 500; color: var(--color-fg-muted); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+
+    code { font-family: var(--font-mono); font-size: 0.75rem; background: var(--color-bg-inset); padding: 1px 6px; border-radius: var(--rounded-sm); border: 1px solid var(--color-border); color: var(--color-fg-primary); }
+    pre { background: var(--color-bg-inset); color: var(--color-fg-primary); border: 1px solid var(--color-border); border-radius: var(--rounded-md); padding: var(--space-lg); overflow-x: auto; font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.55; margin: var(--space-md) 0; }
+    pre code { background: none; padding: 0; border: 0; color: inherit; }
+    .comment { color: var(--color-fg-muted); }
+    .kw      { color: var(--color-cat-5); }
+    .str     { color: var(--color-cat-2); }
+    .fn      { color: var(--color-accent); }
+    .num     { color: var(--color-cat-3); }
+
+    .btn { display: inline-flex; align-items: center; gap: var(--space-md); padding: 8px 14px; border-radius: var(--rounded-md); border: 0; font-family: var(--font-sans); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: background var(--motion-duration-fast) var(--motion-easing); }
+    .btn-accent    { background: var(--color-accent); color: var(--color-fg-on-accent); }
+    .btn-accent:hover { background: var(--color-accent-hover); }
+
+    .playground { background: var(--color-bg-surface); border: 1px solid var(--color-border); border-radius: var(--rounded-lg); padding: var(--space-xl); margin: var(--space-md) 0; }
+    .playground-control { display: flex; align-items: center; gap: var(--space-lg); margin: var(--space-md) 0; }
+    .playground-control label { min-width: 220px; font-size: 0.8125rem; color: var(--color-fg-secondary); }
+    .playground-control input[type="range"] { flex: 1; accent-color: var(--color-accent); }
+    .playground-control output { min-width: 84px; font-family: var(--font-mono); font-size: 0.8125rem; text-align: right; color: var(--color-fg-primary); }
+    .playground-help { font-size: 0.75rem; color: var(--color-fg-muted); margin: var(--space-lg) 0 0; padding-left: var(--space-md); border-left: 2px solid var(--color-border); }
+
+    .timeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-lg); margin: var(--space-lg) 0; }
+    .timeline-step { background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: var(--rounded-md); padding: var(--space-lg); position: relative; }
+    .timeline-step .ph { display: inline-block; font-family: var(--font-mono); font-size: 0.6875rem; color: var(--color-accent); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: var(--space-sm); }
+    .timeline-step strong { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: var(--space-xs); color: var(--color-fg-primary); }
+    .timeline-step p { color: var(--color-fg-secondary); font-size: 0.75rem; margin: 0; }
+    .timeline-step .dur { position: absolute; top: var(--space-md); right: var(--space-md); font-size: 0.6875rem; color: var(--color-fg-muted); font-family: var(--font-mono); }
+
+    .severity-info  { border-left: 3px solid var(--color-cat-1); padding: var(--space-md) var(--space-lg); margin: var(--space-md) 0; background: var(--color-bg-inset); border-radius: 0 var(--rounded-md) var(--rounded-md) 0; }
+    .severity-warn  { border-left: 3px solid var(--color-warning); padding: var(--space-md) var(--space-lg); margin: var(--space-md) 0; background: var(--color-bg-inset); border-radius: 0 var(--rounded-md) var(--rounded-md) 0; }
+    .severity-error { border-left: 3px solid var(--color-error);   padding: var(--space-md) var(--space-lg); margin: var(--space-md) 0; background: var(--color-bg-inset); border-radius: 0 var(--rounded-md) var(--rounded-md) 0; }
+    .severity-info strong, .severity-warn strong, .severity-error strong { display: block; margin-bottom: var(--space-sm); }
+    .severity-info  strong { color: var(--color-cat-1); }
+    .severity-warn  strong { color: var(--color-warning); }
+    .severity-error strong { color: var(--color-error); }
+
+    .compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-lg); margin: var(--space-md) 0; }
+    .compare-card h3 { margin-top: 0; }
+    .compare-card ul { padding-left: var(--space-xl); margin: var(--space-sm) 0; font-size: 0.75rem; color: var(--color-fg-secondary); line-height: 1.6; }
+
+    .kv { display: grid; grid-template-columns: 220px 1fr; gap: var(--space-md) var(--space-lg); font-size: 0.8125rem; margin: var(--space-md) 0; }
+    .kv dt { color: var(--color-fg-muted); font-weight: 500; }
+    .kv dd { margin: 0; color: var(--color-fg-primary); }
+
+    @media print {
+      .tabs { display: none; }
+      .tab-panel { display: block !important; page-break-after: always; }
+      body { background: white; color: black; }
+    }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.5rem; }
+      .container { padding: var(--space-xl) var(--space-md); }
+      .kv { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+
+    <header class="spec-header">
+      <div class="spec-eyebrow">SPEC · <span id="spec-date">2026-05-17</span> · ComfyDir</div>
+      <h1>ComfyDir PWA 化</h1>
+      <p class="lead">現行 Web 版に PWA (manifest + Service Worker + タスクトレイ launcher) を載せる。ネイティブ exe アプリ化案は撤回し、最小コストで「ネイティブアプリ感」「タスクトレイ常駐」「インストール導線」「オフラインフォールバック」を獲得する方針。</p>
+      <div style="display: flex; gap: var(--space-sm); margin-top: var(--space-md); flex-wrap: wrap;">
+        <span class="badge">draft</span>
+        <span class="badge badge-neutral">v0.9.0-web + PWA</span>
+        <span class="badge badge-success">plan 承認済</span>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="overview">概要</button>
+      <button class="tab" data-tab="alternatives">比較</button>
+      <button class="tab" data-tab="dataflow">データフロー</button>
+      <button class="tab" data-tab="impl">実装ステップ</button>
+      <button class="tab" data-tab="playground">パラメータ</button>
+    </nav>
+
+    <!-- ==================== 概要 ==================== -->
+    <section id="overview" class="tab-panel active">
+      <h2>背景</h2>
+      <div class="severity-error">
+        <strong>前段 — PySide6 ネイティブ exe 案は却下</strong>
+        <p>2026-05-17、PySide6 全面リライト案 (3 週間相当の計画) の Phase 2 でタイル描画破綻 (QListView IconMode + 自然アスペクト sizeHint の整合不可) が露呈し、却下された。HEAD は <code>v0.9.0-web</code> タグに巻き戻し済 (PySide6 作業は <code>stash@{0}</code> に温存)。</p>
+      </div>
+      <p>代わりに「現行 Web 版 + PWA」で同じ UX 価値 (ネイティブ感 / 高速起動 / オフライン) を最小コストで取りに行く。</p>
+
+      <h2 style="margin-top: var(--space-2xl);">採用方針</h2>
+      <dl class="kv">
+        <dt>スコープ</dt><dd><strong>MVP</strong> (manifest + アイコン + install prompt) + <strong>SW</strong> (静的キャッシュ + offline.html) + <strong>タスクトレイ</strong> (pystray, クリックで PWA ウィンドウ起動 / 前面化)</dd>
+        <dt>既存 SQLite</dt><dd>1900+ 件はそのまま流用、API 不変 (互換維持)</dd>
+        <dt>配布形態</dt><dd><code>python run.py</code> / <code>start.vbs</code> ベース継続 (PyInstaller 化はしない)</dd>
+        <dt>ブラウザ起動</dt><dd><strong>Chrome → Edge</strong> の順で検出、<code>--new-window http://127.0.0.1:8765</code> で通常タブとして起動 (※<code>--app=</code> は不採用)</dd>
+        <dt>専用プロファイル</dt><dd><code>%LocalAppData%\ComfyDir\ChromeProfile</code> を <code>--user-data-dir</code> に渡す → Chrome の Profile Badging (アカウントアバターオーバーレイ) を抑止 + 普段使い Chrome と完全分離</dd>
+        <dt>採用却下: <code>--app=URL</code></dt><dd>display-mode: standalone と判定され <code>beforeinstallprompt</code> が発火しないため画面内インストールボタンが永久 no-op になる。<strong>通常ウィンドウ起動 → PWA インストール → スタートメニュー / タスクバーピン留めから standalone 起動</strong> の二段運用に切替</dd>
+        <dt>ウィンドウ管理</dt><dd><code>ctypes.windll.user32.FindWindowW</code> + <code>SetForegroundWindow</code> で前面化、なければ新規起動</dd>
+        <dt>依存追加</dt><dd><code>pystray&gt;=0.19</code> のみ (pywin32 は不採用 → ctypes 直叩き)</dd>
+        <dt>theme_color / background_color</dt><dd><code>#56C6E3</code> / <code>#1A1B1F</code> (DESIGN.md トークン)</dd>
+        <dt>manifest shortcuts</dt><dd>MVP では含めない (将来必要なら後日)</dd>
+      </dl>
+
+      <h2 style="margin-top: var(--space-2xl);">構成 — 新規 / 改修ファイル</h2>
+      <svg viewBox="0 0 880 560" role="img" aria-label="PWA 化のファイル構成" style="width: 100%; height: auto; max-width: 880px; background: var(--color-bg-inset); border: 1px solid var(--color-border); border-radius: var(--rounded-md);">
+        <defs>
+          <symbol id="ico-folder2" viewBox="0 0 16 12">
+            <path d="M0 2 a2 2 0 0 1 2 -2 h4 l2 2 h6 a2 2 0 0 1 2 2 v6 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 z" fill="currentColor"/>
+          </symbol>
+          <symbol id="ico-file2" viewBox="0 0 12 14">
+            <path d="M1 0 h7 l3 3 v10 a1 1 0 0 1 -1 1 h-9 a1 1 0 0 1 -1 -1 v-12 a1 1 0 0 1 1 -1 z M8 0 v3 h3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          </symbol>
+        </defs>
+        <style>
+          .tl { stroke: var(--color-border); stroke-width: 1; }
+          .nm-folder { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+          .nm-file   { font-family: var(--font-mono); font-size: 12px; }
+          .cm        { font-family: var(--font-sans); font-size: 11px; fill: var(--color-fg-muted); }
+          .c-new   { color: var(--color-accent);      } .t-new   { fill: var(--color-accent);      }
+          .c-keep  { color: var(--color-fg-primary);  } .t-keep  { fill: var(--color-fg-primary);  }
+          .c-edit  { color: var(--color-warning);     } .t-edit  { fill: var(--color-warning);     }
+        </style>
+        <g transform="translate(20, 24)">
+          <g class="c-keep"><use href="#ico-folder2" width="16" height="12" y="-10"/></g>
+          <text x="22" y="0" class="nm-folder t-keep">ComfyImageOrganizer/</text>
+          <text x="220" y="0" class="cm">v0.9.0-web ベース</text>
+        </g>
+        <line class="tl" x1="32" y1="32" x2="32" y2="540"/>
+        <!-- launcher.py -->
+        <g transform="translate(0, 60)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-new"><use href="#ico-file2" width="12" height="14" x="56" y="-11"/></g>
+          <text x="76" y="0" class="nm-file t-new">launcher.py</text>
+          <text x="260" y="0" class="cm">新規 — pystray + uvicorn thread + Win32 前面化</text>
+        </g>
+        <g transform="translate(0, 86)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-keep"><use href="#ico-file2" width="12" height="14" x="56" y="-11"/></g>
+          <text x="76" y="0" class="nm-file t-keep">run.py</text>
+          <text x="260" y="0" class="cm">流用 (launcher と並行で単体起動も可)</text>
+        </g>
+        <g transform="translate(0, 112)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-edit"><use href="#ico-file2" width="12" height="14" x="56" y="-11"/></g>
+          <text x="76" y="0" class="nm-file t-edit">start.vbs</text>
+          <text x="260" y="0" class="cm">書換 — 起動先を run.py → launcher.py</text>
+        </g>
+        <g transform="translate(0, 138)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-edit"><use href="#ico-file2" width="12" height="14" x="56" y="-11"/></g>
+          <text x="76" y="0" class="nm-file t-edit">requirements.txt</text>
+          <text x="260" y="0" class="cm">書換 — pystray&gt;=0.19 を 1 行追加</text>
+        </g>
+        <!-- scripts/ -->
+        <g transform="translate(0, 164)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-new"><use href="#ico-folder2" width="16" height="12" x="56" y="-10"/></g>
+          <text x="78" y="0" class="nm-folder t-new">scripts/</text>
+          <text x="260" y="0" class="cm">新規 — smoke_pwa.ps1 (UTF-8 BOM)</text>
+        </g>
+        <!-- assets/ -->
+        <g transform="translate(0, 190)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-keep"><use href="#ico-folder2" width="16" height="12" x="56" y="-10"/></g>
+          <text x="78" y="0" class="nm-folder t-keep">assets/</text>
+          <text x="260" y="0" class="cm">+ icon-192.png / icon-512.png (自動生成)</text>
+        </g>
+        <!-- docs/specs/ -->
+        <g transform="translate(0, 216)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-new"><use href="#ico-folder2" width="16" height="12" x="56" y="-10"/></g>
+          <text x="78" y="0" class="nm-folder t-new">docs/specs/</text>
+          <text x="260" y="0" class="cm">本仕様書 (2026-05-17_comfydir-pwa.html)</text>
+        </g>
+        <!-- tools/ -->
+        <g transform="translate(0, 242)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-edit"><use href="#ico-folder2" width="16" height="12" x="56" y="-10"/></g>
+          <text x="78" y="0" class="nm-folder t-edit">tools/</text>
+          <text x="260" y="0" class="cm">make_icon.py に --png モード追加</text>
+        </g>
+        <!-- src/comfy_image_organizer/ -->
+        <g transform="translate(0, 268)">
+          <line class="tl" x1="32" y1="0" x2="56" y2="0"/>
+          <g class="c-keep"><use href="#ico-folder2" width="16" height="12" x="56" y="-10"/></g>
+          <text x="78" y="0" class="nm-folder t-keep">src/comfy_image_organizer/</text>
+          <text x="320" y="0" class="cm">Web 版コード</text>
+        </g>
+        <line class="tl" x1="80" y1="278" x2="80" y2="520"/>
+        <g transform="translate(0, 294)">
+          <line class="tl" x1="80" y1="0" x2="104" y2="0"/>
+          <g class="c-edit"><use href="#ico-file2" width="12" height="14" x="104" y="-11"/></g>
+          <text x="124" y="0" class="nm-file t-edit">main.py</text>
+          <text x="260" y="0" class="cm">書換 — /manifest.json /sw.js /offline.html /assets を追加</text>
+        </g>
+        <g transform="translate(0, 320)">
+          <line class="tl" x1="80" y1="0" x2="104" y2="0"/>
+          <g class="c-keep"><use href="#ico-folder2" width="16" height="12" x="104" y="-10"/></g>
+          <text x="126" y="0" class="nm-folder t-keep">static/</text>
+        </g>
+        <line class="tl" x1="128" y1="332" x2="128" y2="494"/>
+        <g transform="translate(0, 348)">
+          <line class="tl" x1="128" y1="0" x2="152" y2="0"/>
+          <g class="c-edit"><use href="#ico-file2" width="12" height="14" x="152" y="-11"/></g>
+          <text x="172" y="0" class="nm-file t-edit">index.html</text>
+          <text x="320" y="0" class="cm">&lt;head&gt; viewport/theme-color/manifest, toolbar に install ボタン</text>
+        </g>
+        <g transform="translate(0, 374)">
+          <line class="tl" x1="128" y1="0" x2="152" y2="0"/>
+          <g class="c-edit"><use href="#ico-file2" width="12" height="14" x="152" y="-11"/></g>
+          <text x="172" y="0" class="nm-file t-edit">app.js</text>
+          <text x="320" y="0" class="cm">SW 登録 + beforeinstallprompt 捕捉</text>
+        </g>
+        <g transform="translate(0, 400)">
+          <line class="tl" x1="128" y1="0" x2="152" y2="0"/>
+          <g class="c-keep"><use href="#ico-file2" width="12" height="14" x="152" y="-11"/></g>
+          <text x="172" y="0" class="nm-file t-keep">style.css</text>
+          <text x="320" y="0" class="cm">流用 — :root トークン (theme_color の Hex 源)</text>
+        </g>
+        <g transform="translate(0, 426)">
+          <line class="tl" x1="128" y1="0" x2="152" y2="0"/>
+          <g class="c-new"><use href="#ico-file2" width="12" height="14" x="152" y="-11"/></g>
+          <text x="172" y="0" class="nm-file t-new">manifest.json</text>
+          <text x="320" y="0" class="cm">新規 — name/icons/theme_color/display:standalone</text>
+        </g>
+        <g transform="translate(0, 452)">
+          <line class="tl" x1="128" y1="0" x2="152" y2="0"/>
+          <g class="c-new"><use href="#ico-file2" width="12" height="14" x="152" y="-11"/></g>
+          <text x="172" y="0" class="nm-file t-new">sw.js</text>
+          <text x="320" y="0" class="cm">新規 — precache + CacheFirst/NetworkFirst</text>
+        </g>
+        <g transform="translate(0, 478)">
+          <line class="tl" x1="128" y1="0" x2="152" y2="0"/>
+          <g class="c-new"><use href="#ico-file2" width="12" height="14" x="152" y="-11"/></g>
+          <text x="172" y="0" class="nm-file t-new">offline.html</text>
+          <text x="320" y="0" class="cm">新規 — サーバ未起動時 fallback</text>
+        </g>
+      </svg>
+    </section>
+
+    <!-- ==================== 比較 ==================== -->
+    <section id="alternatives" class="tab-panel">
+      <h2>採用しなかった案</h2>
+      <p>PWA 化のアプローチを 3 つ比較し、当初<strong>「pystray + Edge --app=」</strong> を採用したが、<code>--app=</code> モードでは Chrome が display-mode: standalone と判定し <code>beforeinstallprompt</code> が発火しない仕様が判明したため、<strong>「pystray + Chrome <code>--new-window</code> + 専用 user-data-dir」</strong> へ最終切替。決め手は「依存最小 (pystray のみ)」「PWA インストール導線が機能する」「Profile Badging を抑止して独自アイコンが綺麗に出る」。</p>
+
+      <div class="compare-grid">
+        <div class="card compare-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3>pystray + Chrome --new-window + 専用プロファイル</h3>
+            <span class="badge badge-success">採用</span>
+          </div>
+          <p style="font-size: 0.75rem; color: var(--color-fg-secondary);">タスクトレイに常駐、クリックで <code>chrome --user-data-dir=...\ComfyDir\ChromeProfile --new-window http://127.0.0.1:8765 --window-size=1440,900</code> で通常ウィンドウ起動。</p>
+          <strong style="font-size: 0.6875rem; color: var(--color-success); letter-spacing: 0.08em;">PROS</strong>
+          <ul>
+            <li>依存は <code>pystray</code> のみ (pywin32 不要)</li>
+            <li>通常ウィンドウなので <code>beforeinstallprompt</code> が発火 → 画面内インストールボタンが機能</li>
+            <li>専用プロファイル (Google 未ログイン) → Profile Badging のアバターオーバーレイなし</li>
+            <li>普段使い Chrome と完全分離 (履歴・cookie・拡張機能)</li>
+            <li>SQLite 含む既存資産は無修正</li>
+          </ul>
+          <strong style="font-size: 0.6875rem; color: var(--color-error); letter-spacing: 0.08em;">CONS</strong>
+          <ul>
+            <li>初回起動時に専用プロファイルディレクトリ作成のため Chrome 起動が少し遅い</li>
+            <li>「アプリ感」(タスクバー独自アイコン + standalone) を得るには PWA インストール必須 (二段構え運用)</li>
+          </ul>
+        </div>
+
+        <div class="card compare-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3>pywebview / Eel</h3>
+            <span class="badge badge-error">却下</span>
+          </div>
+          <p style="font-size: 0.75rem; color: var(--color-fg-secondary);">Python から WebView2 / CEF を呼んでブラウザウィンドウをホスト。</p>
+          <strong style="font-size: 0.6875rem; color: var(--color-success); letter-spacing: 0.08em;">PROS</strong>
+          <ul>
+            <li>Python 単一プロセスでウィンドウ管理</li>
+            <li>JS bridge でファイル D&D も拡張可</li>
+          </ul>
+          <strong style="font-size: 0.6875rem; color: var(--color-error); letter-spacing: 0.08em;">CONS</strong>
+          <ul>
+            <li>PWA install 機能が動かない (WebView2 は manifest 非対応)</li>
+            <li>本目的「PWA 化」の本筋を外れる</li>
+            <li>Edge シェルの D&D 互換性が壊れる可能性</li>
+          </ul>
+        </div>
+
+        <div class="card compare-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3>Electron 化 / Tauri 化</h3>
+            <span class="badge badge-error">却下</span>
+          </div>
+          <p style="font-size: 0.75rem; color: var(--color-fg-secondary);">フル機能のデスクトップアプリ化。</p>
+          <strong style="font-size: 0.6875rem; color: var(--color-success); letter-spacing: 0.08em;">PROS</strong>
+          <ul>
+            <li>完全制御 (タイトルバー / トレイ / メニュー)</li>
+          </ul>
+          <strong style="font-size: 0.6875rem; color: var(--color-error); letter-spacing: 0.08em;">CONS</strong>
+          <ul>
+            <li>配布サイズ 100MB+、PyInstaller 案と同じ落とし穴</li>
+            <li>Python sidecar 起動の二重ランタイム</li>
+            <li>ユーザー要求「PWA 化」とズレる</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== データフロー ==================== -->
+    <section id="dataflow" class="tab-panel">
+      <h2>データフロー</h2>
+
+      <h3>起動シーケンス (start.vbs → tray → ブラウザ)</h3>
+      <svg viewBox="0 0 880 360" role="img" aria-label="ComfyDir PWA 起動シーケンス" style="width: 100%; height: auto; max-width: 880px;">
+        <defs>
+          <marker id="ar1" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M 0 0 L 9 3 L 0 6 Z" fill="var(--color-fg-muted)"/>
+          </marker>
+          <marker id="ar1-accent" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M 0 0 L 9 3 L 0 6 Z" fill="var(--color-accent)"/>
+          </marker>
+        </defs>
+        <!-- Row 1 -->
+        <rect x="20"  y="20" width="170" height="56" rx="10" fill="var(--color-bg-elevated)" stroke="var(--color-border)"/>
+        <text x="105" y="44" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--color-fg-primary)">start.vbs</text>
+        <text x="105" y="62" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-fg-secondary)">double-click</text>
+        <path d="M 190 48 L 240 48" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar1)"/>
+
+        <rect x="240" y="20" width="170" height="56" rx="10" fill="var(--color-bg-elevated)" stroke="var(--color-border)"/>
+        <text x="325" y="44" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--color-fg-primary)">pythonw.exe</text>
+        <text x="325" y="62" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-fg-secondary)">launcher.py</text>
+        <path d="M 410 48 L 460 48" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar1)"/>
+
+        <rect x="460" y="20" width="170" height="56" rx="10" fill="var(--color-accent)"/>
+        <text x="545" y="44" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--color-bg-base)">pystray.Icon</text>
+        <text x="545" y="62" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-bg-base)">タスクトレイ常駐</text>
+        <path d="M 630 48 L 680 48" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar1)"/>
+
+        <rect x="680" y="20" width="170" height="56" rx="10" fill="var(--color-cat-2)"/>
+        <text x="765" y="44" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--color-bg-base)">uvicorn.Server</text>
+        <text x="765" y="62" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-bg-base)">thread で起動</text>
+
+        <!-- vertical down -->
+        <path d="M 545 76 L 545 116" stroke="var(--color-accent)" stroke-width="2" marker-end="url(#ar1-accent)" fill="none"/>
+
+        <!-- Row 2: user click branch -->
+        <rect x="460" y="116" width="170" height="56" rx="10" fill="var(--color-cat-4)"/>
+        <text x="545" y="140" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--color-bg-base)">ユーザー click</text>
+        <text x="545" y="158" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-bg-base)">tray icon</text>
+        <path d="M 545 172 L 545 200" stroke="var(--color-accent)" stroke-width="2" marker-end="url(#ar1-accent)" fill="none"/>
+
+        <!-- decision diamond -->
+        <polygon points="475,210 615,210 615,260 475,260" fill="var(--color-bg-elevated)" stroke="var(--color-accent)"/>
+        <text x="545" y="232" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-fg-primary)">FindWindowW("ComfyDir")</text>
+        <text x="545" y="250" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-fg-secondary)">既存 hwnd ?</text>
+
+        <!-- Yes branch -->
+        <path d="M 475 235 L 380 235 L 380 280" stroke="var(--color-success)" stroke-width="2" marker-end="url(#ar1)" fill="none"/>
+        <text x="370" y="225" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-success)">YES</text>
+        <rect x="220" y="280" width="280" height="48" rx="10" fill="var(--color-cat-2)"/>
+        <text x="360" y="302" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-bg-base)">ShowWindow(SW_RESTORE) +</text>
+        <text x="360" y="318" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-bg-base)">SetForegroundWindow(hwnd)</text>
+
+        <!-- No branch -->
+        <path d="M 615 235 L 720 235 L 720 280" stroke="var(--color-error)" stroke-width="2" marker-end="url(#ar1)" fill="none"/>
+        <text x="730" y="225" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-error)">NO</text>
+        <rect x="560" y="280" width="300" height="48" rx="10" fill="var(--color-cat-4)"/>
+        <text x="710" y="302" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-bg-base)">subprocess.Popen([msedge,</text>
+        <text x="710" y="318" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-bg-base)">"--app=http://127.0.0.1:8765"])</text>
+
+        <text x="20" y="350" font-family="JetBrains Mono, monospace" font-size="10" fill="var(--color-fg-muted)">CREATE_NO_WINDOW | DETACHED_PROCESS で子コンソール窓を抑止</text>
+      </svg>
+
+      <h3>Service Worker キャッシュルーティング</h3>
+      <svg viewBox="0 0 880 360" role="img" aria-label="SW fetch ハンドラのルーティング" style="width: 100%; height: auto; max-width: 880px;">
+        <defs>
+          <marker id="ar2" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M 0 0 L 9 3 L 0 6 Z" fill="var(--color-fg-muted)"/>
+          </marker>
+        </defs>
+        <!-- Origin -->
+        <rect x="20" y="20" width="160" height="56" rx="10" fill="var(--color-bg-elevated)" stroke="var(--color-border)"/>
+        <text x="100" y="44" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--color-fg-primary)">fetch event</text>
+        <text x="100" y="62" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-fg-secondary)">GET / same-origin</text>
+
+        <!-- Route 1: thumb -->
+        <path d="M 180 36 L 240 36" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)"/>
+        <rect x="240" y="14" width="280" height="44" rx="8" fill="var(--color-cat-2)"/>
+        <text x="380" y="33" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-bg-base)">/api/images/*/thumb</text>
+        <text x="380" y="49" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="var(--color-bg-base)">CacheFirst (sha1+w で固有)</text>
+        <path d="M 520 36 L 580 36" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)"/>
+        <rect x="580" y="14" width="280" height="44" rx="8" fill="var(--color-bg-elevated)" stroke="var(--color-border)"/>
+        <text x="720" y="42" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--color-fg-primary)">caches.match → なければ fetch + put</text>
+
+        <!-- Route 2: prompt-category-map -->
+        <path d="M 100 76 L 100 96" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)" fill="none"/>
+        <rect x="20" y="96" width="160" height="44" rx="8" fill="var(--color-bg-elevated)" stroke="var(--color-border)"/>
+        <text x="100" y="124" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-fg-primary)">URL を判定</text>
+        <path d="M 180 118 L 240 118" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)"/>
+        <rect x="240" y="96" width="280" height="44" rx="8" fill="var(--color-cat-2)"/>
+        <text x="380" y="115" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-bg-base)">/api/prompt-category-map</text>
+        <text x="380" y="131" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="var(--color-bg-base)">CacheFirst</text>
+
+        <!-- Route 3: other /api/* -->
+        <path d="M 380 140 L 380 156" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)" fill="none"/>
+        <rect x="240" y="156" width="280" height="44" rx="8" fill="var(--color-cat-1)"/>
+        <text x="380" y="175" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-bg-base)">/api/* (それ以外)</text>
+        <text x="380" y="191" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="var(--color-bg-base)">NetworkFirst → 失敗時 cache</text>
+
+        <!-- Route 4: navigate -->
+        <path d="M 380 200 L 380 216" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)" fill="none"/>
+        <rect x="240" y="216" width="280" height="44" rx="8" fill="var(--color-cat-4)"/>
+        <text x="380" y="235" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-bg-base)">req.mode === "navigate"</text>
+        <text x="380" y="251" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="var(--color-bg-base)">NetworkFirst → fallback /offline.html</text>
+
+        <!-- Route 5: static -->
+        <path d="M 380 260 L 380 276" stroke="var(--color-fg-muted)" stroke-width="2" marker-end="url(#ar2)" fill="none"/>
+        <rect x="240" y="276" width="280" height="44" rx="8" fill="var(--color-cat-5)"/>
+        <text x="380" y="295" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="var(--color-bg-base)">静的 (style.css / app.js / 画像)</text>
+        <text x="380" y="311" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="var(--color-bg-base)">CacheFirst</text>
+
+        <!-- precache box -->
+        <rect x="580" y="160" width="280" height="160" rx="10" fill="var(--color-bg-inset)" stroke="var(--color-accent)"/>
+        <text x="720" y="184" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="var(--color-accent)">PRECACHE (install 時)</text>
+        <g font-family="JetBrains Mono, monospace" font-size="10" fill="var(--color-fg-secondary)">
+          <text x="596" y="208">/</text>
+          <text x="596" y="224">/offline.html</text>
+          <text x="596" y="240">/manifest.json</text>
+          <text x="596" y="256">/static/style.css</text>
+          <text x="596" y="272">/static/app.js</text>
+          <text x="596" y="288">/static/favicon.svg</text>
+          <text x="596" y="304">/assets/icon-192.png</text>
+          <text x="596" y="320">/assets/icon-512.png</text>
+        </g>
+      </svg>
+
+      <h3>主要コード断片</h3>
+<pre><code><span class="comment"># launcher.py の核 — Win32 API でウィンドウ前面化</span>
+<span class="kw">import</span> ctypes, shutil, subprocess
+_user32 = ctypes.windll.user32
+_user32.FindWindowW.restype = ctypes.c_void_p
+
+<span class="kw">def</span> <span class="fn">open_or_focus_window</span>():
+    hwnd = _user32.FindWindowW(<span class="kw">None</span>, <span class="str">"ComfyDir"</span>)
+    <span class="kw">if</span> hwnd:
+        _user32.ShowWindow(hwnd, <span class="num">9</span>)  <span class="comment"># SW_RESTORE</span>
+        _user32.SetForegroundWindow(hwnd)
+        <span class="kw">return</span>
+    browser = shutil.which(<span class="str">"chrome"</span>) <span class="kw">or</span> shutil.which(<span class="str">"msedge"</span>)
+    CHROME_PROFILE_DIR.mkdir(parents=<span class="kw">True</span>, exist_ok=<span class="kw">True</span>)
+    subprocess.Popen(
+        [browser, <span class="str">f"--user-data-dir={CHROME_PROFILE_DIR}"</span>,
+         <span class="str">"--new-window"</span>, URL, <span class="str">"--no-first-run"</span>,
+         <span class="str">"--no-default-browser-check"</span>, <span class="str">"--window-size=1440,900"</span>],
+        creationflags=<span class="num">0x08000000</span> | <span class="num">0x00000008</span>,
+    )</code></pre>
+
+<pre><code><span class="comment">// sw.js — fetch ハンドラのルーティング骨格</span>
+self.addEventListener(<span class="str">"fetch"</span>, (e) =&gt; {
+  <span class="kw">const</span> req = e.request, url = <span class="kw">new</span> URL(req.url);
+  <span class="kw">if</span> (req.method !== <span class="str">"GET"</span>) <span class="kw">return</span>;
+  <span class="kw">if</span> (url.origin !== self.location.origin) <span class="kw">return</span>;
+  <span class="kw">if</span> (/^\/api\/images\/\d+\/thumb/.test(url.pathname))
+    <span class="kw">return</span> e.respondWith(cacheFirst(req, RUNTIME));
+  <span class="kw">if</span> (url.pathname === <span class="str">"/api/prompt-category-map"</span>)
+    <span class="kw">return</span> e.respondWith(cacheFirst(req, RUNTIME));
+  <span class="kw">if</span> (url.pathname.startsWith(<span class="str">"/api/"</span>))
+    <span class="kw">return</span> e.respondWith(networkFirst(req, RUNTIME));
+  <span class="kw">if</span> (req.mode === <span class="str">"navigate"</span>)
+    <span class="kw">return</span> e.respondWith(
+      networkFirst(req, RUNTIME).catch(() =&gt; caches.match(<span class="str">"/offline.html"</span>))
+    );
+  e.respondWith(cacheFirst(req, RUNTIME));
+});</code></pre>
+    </section>
+
+    <!-- ==================== 実装ステップ ==================== -->
+    <section id="impl" class="tab-panel">
+      <h2>実装ステップ</h2>
+      <p>Phase 0〜6 の 7 段階。各 Phase は単独で動く成果物。合計工数は <strong>6.0h</strong> (バッファ込み)。</p>
+
+      <div class="timeline">
+        <div class="timeline-step"><span class="dur">0.5h</span><span class="ph">Phase 0</span><strong>アイコン素材生成</strong><p>make_icon.py に --png モード追加。icon-192 / icon-512 PNG を assets/ に出力</p></div>
+        <div class="timeline-step"><span class="dur">1.0h</span><span class="ph">Phase 1</span><strong>manifest + head + ルート</strong><p>manifest.json 新規 / index.html head 改修 / main.py に 4 ルート追加</p></div>
+        <div class="timeline-step"><span class="dur">1.0h</span><span class="ph">Phase 2</span><strong>Service Worker + offline</strong><p>sw.js / offline.html / app.js で SW 登録</p></div>
+        <div class="timeline-step"><span class="dur">0.5h</span><span class="ph">Phase 3</span><strong>install ボタン</strong><p>beforeinstallprompt 捕捉 / btnInstall 表示制御</p></div>
+        <div class="timeline-step"><span class="dur">1.5h</span><span class="ph">Phase 4</span><strong>launcher.py + start.vbs</strong><p>pystray + uvicorn thread + Win32 前面化</p></div>
+        <div class="timeline-step"><span class="dur">1.0h</span><span class="ph">Phase 5</span><strong>smoke 1〜5</strong><p>scripts/smoke_pwa.ps1 作成 + safe-commit ゲート 5 連携</p></div>
+        <div class="timeline-step"><span class="dur">0.5h</span><span class="ph">Phase 6</span><strong>README / DESIGN.md</strong><p>PWA インストール手順とタスクトレイ運用を追記</p></div>
+      </div>
+
+      <h3>各 Phase の DoD</h3>
+      <table>
+        <thead><tr><th>Phase</th><th>DoD</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td><code>python tools/make_icon.py --png</code> で <code>assets/icon-192.png</code> と <code>icon-512.png</code> が生成される</td></tr>
+          <tr><td>1</td><td>Edge DevTools → Application → Manifest が緑。アドレスバー右の「アプリとしてインストール」が有効</td></tr>
+          <tr><td>2</td><td>SW が <code>activated and is running</code>、Cache Storage に precache 8 件。<code>Stop-Process pythonw,python</code> 後にリロードで <code>offline.html</code> が表示</td></tr>
+          <tr><td>3</td><td>install ボタンが表示 → クリックで OS ダイアログ → インストール完了でボタン非表示</td></tr>
+          <tr><td>4</td><td><code>start.vbs</code> ダブルクリック → tray 出現 → クリックで Edge <code>--app=</code> ウィンドウ起動 → 2 回目クリックで前面化のみ → 「終了」で全プロセス停止</td></tr>
+          <tr><td>5</td><td>smoke 1〜5 全て PASS、<code>smoke_pwa.ps1</code> が exit 0</td></tr>
+          <tr><td>6</td><td>新規ユーザーが README だけで起動・インストール・終了できる</td></tr>
+        </tbody>
+      </table>
+
+      <h3>変更ファイル一覧</h3>
+      <table>
+        <thead><tr><th>パス</th><th>判定</th><th>変更内容</th></tr></thead>
+        <tbody>
+          <tr><td><code>launcher.py</code></td><td><span class="badge badge-success">新規</span></td><td>プロジェクトルートに 80-100 行</td></tr>
+          <tr><td><code>static/manifest.json</code></td><td><span class="badge badge-success">新規</span></td><td>name / icons / theme_color / display</td></tr>
+          <tr><td><code>static/sw.js</code></td><td><span class="badge badge-success">新規</span></td><td>precache + fetch ルーティング 80 行</td></tr>
+          <tr><td><code>static/offline.html</code></td><td><span class="badge badge-success">新規</span></td><td>fallback ページ 20 行</td></tr>
+          <tr><td><code>assets/icon-192.png</code> / <code>icon-512.png</code></td><td><span class="badge badge-success">自動生成</span></td><td>make_icon.py --png で出力</td></tr>
+          <tr><td><code>scripts/smoke_pwa.ps1</code></td><td><span class="badge badge-success">新規</span></td><td>UTF-8 BOM、launcher 起動 + Test-NetConnection</td></tr>
+          <tr><td><code>main.py</code></td><td><span class="badge badge-warning">書換</span></td><td>4 ルート追加 (manifest / sw.js / offline.html / /assets マウント)</td></tr>
+          <tr><td><code>index.html</code></td><td><span class="badge badge-warning">書換</span></td><td>head 5 行 + install ボタン 8 行</td></tr>
+          <tr><td><code>app.js</code></td><td><span class="badge badge-warning">書換</span></td><td>SW 登録 + beforeinstallprompt 30 行</td></tr>
+          <tr><td><code>start.vbs</code></td><td><span class="badge badge-warning">書換</span></td><td>起動先を <code>launcher.py</code> に (3 行差分)</td></tr>
+          <tr><td><code>tools/make_icon.py</code></td><td><span class="badge badge-warning">書換</span></td><td>--png モード追加 10 行</td></tr>
+          <tr><td><code>requirements.txt</code></td><td><span class="badge badge-warning">書換</span></td><td>pystray&gt;=0.19 を 1 行追加</td></tr>
+          <tr><td><code>run.py</code></td><td><span class="badge">流用</span></td><td>変更なし (launcher 並行で単体起動も可)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>リスクと対応</h3>
+      <table>
+        <thead><tr><th>#</th><th>リスク</th><th>対応</th></tr></thead>
+        <tbody>
+          <tr><td>R1</td><td>pystray が VBS hidden 起動下でコンソール窓を一瞬出す</td><td><code>subprocess.Popen</code> で <code>CREATE_NO_WINDOW \| DETACHED_PROCESS</code> 明示。pythonw.exe で launcher 起動</td></tr>
+          <tr><td>R2</td><td>PWA インストール後の app-id 起動と <code>--app=</code> の挙動差</td><td>README で「インストール後はスタートメニュー優先、<code>--app=</code> 直起動は tray 経由のみ」と明記</td></tr>
+          <tr><td>R3</td><td>SW キャッシュバージョン管理ミスで古い <code>app.js</code> が残る</td><td>(a) 登録時 <code>updateViaCache: 'none'</code> (b) <code>/sw.js</code> に <code>Cache-Control: no-cache</code> (c) <code>VERSION</code> 定数を変えれば古い cache を自動破棄</td></tr>
+          <tr><td>R4</td><td>localhost で SW が動くか</td><td>localhost は secure context として SW 有効 (W3C 仕様)。smoke 2 で検証</td></tr>
+          <tr><td>R5</td><td>既存 <code>.lnk</code> と PWA install 生成 shortcut の二重管理</td><td>README で「PWA インストールは任意」と明記</td></tr>
+          <tr><td>R6</td><td><code>FindWindowW</code> 完全一致で末尾 <code>- Microsoft Edge</code> が付いて外す</td><td>フォールバック: <code>EnumWindows</code> で部分一致。smoke 4 で対応</td></tr>
+          <tr><td>R7</td><td>uvicorn を thread で起動するとシグナルハンドラ警告</td><td><code>uvicorn.Server.install_signal_handlers = lambda *a, **k: None</code> でパッチ</td></tr>
+          <tr><td>R8</td><td>start.vbs 文字コード破壊</td><td>ASCII 維持、新規 MsgBox 文言も英語</td></tr>
+        </tbody>
+      </table>
+
+      <h3>smoke テスト</h3>
+      <table>
+        <thead><tr><th>ID</th><th>内容</th><th>合格条件</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><code>start.vbs</code> → tray → クリック → Edge <code>--app=</code> ウィンドウ</td><td>既存 1900+ 件のサムネが表示</td></tr>
+          <tr><td>2</td><td>DevTools Application タブ</td><td>Manifest 緑 / SW activated / Cache 8 件</td></tr>
+          <tr><td>3</td><td><code>Stop-Process pythonw,python</code> → リロード</td><td><code>offline.html</code> 表示</td></tr>
+          <tr><td>4</td><td>tray 再クリック (既ウィンドウ)</td><td>新規ウィンドウ無し、既存が前面化</td></tr>
+          <tr><td>5</td><td><code>scripts/smoke_pwa.ps1</code></td><td>launcher → 127.0.0.1:8765 binding → kill → exit 0</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ==================== パラメータ ==================== -->
+    <section id="playground" class="tab-panel">
+      <h2>パラメータ</h2>
+      <p>SW のキャッシュバージョンを調整して、古い <code>app.js</code> を強制的に破棄したいときに「次回 SW activate でキャッシュ全消し」を起こせる。スライダで値を選んで「プロンプトとしてコピー」で Claude に戻す。</p>
+
+      <div class="playground">
+        <div class="playground-control">
+          <label for="param-version">SW <code>VERSION</code> 定数</label>
+          <input type="range" id="param-version" min="1" max="20" value="1" step="1" data-unit="">
+          <output for="param-version">v1</output>
+        </div>
+
+        <div class="playground-help">
+          <p style="margin: 0 0 var(--space-sm);">
+            <strong style="color: var(--color-fg-primary);">指針</strong><br>
+            • <code>v1</code>: 初回リリース。precache 8 件 + runtime cache<br>
+            • <code>v2〜</code>: <code>app.js</code> / <code>style.css</code> / <code>index.html</code> 改修で挙動が変わったとき。activate で旧 cache (<code>comfydir-precache-v(N-1)</code> 等) を <code>caches.delete</code> で掃除<br>
+            • バージョン上げ忘れると古い <code>app.js</code> が browser cache から返って改修が反映されない (R3 の本丸)
+          </p>
+          <p style="margin: var(--space-md) 0 0;">
+            <strong style="color: var(--color-fg-primary);">補足</strong><br>
+            <code>sw.js</code> 冒頭の <code>const VERSION = "vN"</code> を直接編集。<code>VERSION</code> 単体を変えれば <code>PRECACHE</code> と <code>RUNTIME</code> のキー名が自動的に新しくなり、旧 cache は activate で消える。
+          </p>
+        </div>
+
+        <div style="margin-top: var(--space-xl);">
+          <button class="btn btn-accent" id="copy-prompt">プロンプトとしてコピー</button>
+        </div>
+      </div>
+
+      <div class="severity-info" style="margin-top: var(--space-xl);">
+        <strong>注記</strong>
+        <p>本仕様書には「進捗チェックリスト」を持ち込まない (HTML 仕様書運用ルールの "状態保存問題" 回避)。進捗管理は git tag / Issue で。</p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === target));
+      });
+    });
+
+    document.querySelectorAll('.playground-control input[type="range"]').forEach(r => {
+      const out = document.querySelector(`output[for="${r.id}"]`);
+      r.addEventListener('input', () => { if (out) out.textContent = "v" + r.value; });
+    });
+
+    const copyBtn = document.getElementById('copy-prompt');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const v = document.getElementById('param-version').value;
+        const prompt = `ComfyDir PWA 化 Phase 2 の sw.js で VERSION = "v${v}" に設定してください。\n\n` +
+                       `具体的には static/sw.js 冒頭の const VERSION = "v${v}" と書き、PRECACHE / RUNTIME の cache 名末尾もこれに従って自動的に "comfydir-precache-v${v}" / "comfydir-runtime-v${v}" になるようにしてください。`;
+        try {
+          await navigator.clipboard.writeText(prompt);
+          const orig = copyBtn.textContent;
+          copyBtn.textContent = 'コピーしました';
+          setTimeout(() => copyBtn.textContent = orig, 1500);
+        } catch (e) {
+          alert('クリップボードに書き込めませんでした:\n\n' + prompt);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

@@ -140,6 +140,12 @@ input, select, textarea { background: none; border: 0; }
 *::-webkit-scrollbar-thumb { background: var(--color-border-subtle); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
 *::-webkit-scrollbar-thumb:hover { background: var(--color-border-strong); background-clip: padding-box; border: 2px solid transparent; }
 
+/* HTML5 `hidden` 属性は UA stylesheet で display: none だが、各要素に
+   display: inline-flex を当てると specificity 負けして表示されてしまう。
+   ここで [hidden] を明示 !important で潰し、`<button class="btn" hidden>` が
+   想定どおり非表示になるようにする (PWA インストールボタンの初期 hidden 用)。 */
+[hidden] { display: none !important; }
+
 /* ============================== Buttons ================================ */
 .btn,
 .btn-primary,
@@ -503,7 +509,11 @@ input[type="range"]::-moz-range-thumb {
   border-bottom: 1px solid var(--color-border-subtle);
   padding: var(--space-5) var(--space-6);
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  /* minmax(0, 1fr) で center 列の最小幅を 0 に固定し、中身が大きい時の
+     overflow を center 内に閉じ込める。auto 1fr auto のままだと center が
+     自然幅を保ち、右列に右上から侵入してインストール/お気に入りボタンが
+     center の上に重なって見えるバグが出る (1280-1440px 帯で頻発)。 */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-6);
   align-items: center;
   position: relative;
@@ -559,15 +569,43 @@ input[type="range"]::-moz-range-thumb {
   align-items: center;
   gap: var(--space-5);
   min-width: 0;
+  /* center 列は minmax(0, 1fr) で確保しているので、ここで nowrap でも
+     右列に侵入しない (overflow は center 内で発生 / x スクロールはせず詰める)。 */
   flex-wrap: nowrap;
 }
+/* 右列: center の Row 1 / Row 2 と高さを揃える 2 段 grid。
+   align-content / justify-items は center の Row 高さ (auto auto) と
+   ぴったり対応させたいため subgrid 相当の挙動を grid-template-rows で再現。 */
 .toolbar__right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
+  display: grid;
+  grid-template-rows: auto auto;
   gap: var(--space-4);
+  align-items: center;
+  justify-items: end;
   height: 100%;
+}
+.toolbar__right-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* 右列のボタンは toolbar の他のボタン (追加/再スキャン/解除/編集) より
+   ひと回り小さくして「補助 UI」の格を出す。 */
+.btn--compact {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: 1.2;
+  min-height: 30px;
+}
+.btn--compact .icon,
+.btn--compact > svg:not(.icon) {
+  width: 14px;
+  height: 14px;
+}
+.btn--icon.btn--compact {
+  padding: var(--space-2);
+  min-width: 30px;
 }
 
 /* Group (label + controls) */
