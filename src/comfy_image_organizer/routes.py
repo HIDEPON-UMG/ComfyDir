@@ -4,7 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import subprocess
+import sys
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -27,6 +30,8 @@ router = APIRouter()
 class FolderCreate(BaseModel):
     path: str
     label: str | None = None
+    # サブディレクトリも含めて再帰スキャンするか (default=True / 従来挙動)。
+    recursive: bool = True
 
 
 class FolderUpdate(BaseModel):
@@ -40,6 +45,8 @@ class FolderUpdate(BaseModel):
     # label を「明示的に空にしたい」のか「未指定」なのかを区別するため、
     # クライアント側はラベルを送るときにこのフラグを True にする。
     label_provided: bool = False
+    # recursive を変更したいときだけ非 None で送る。
+    recursive: bool | None = None
 
 
 class TagAssignRequest(BaseModel):
@@ -73,10 +80,24 @@ def list_folders(conn=Depends(get_conn)) -> list[dict[str, Any]]:
     rows = repo.list_folders(conn)
     out: list[dict[str, Any]] = []
     for r in rows:
-        # 各フォルダの画像件数を添える (UIでの表示に便利)
-        cnt = conn.execute(
-            "SELECT COUNT(*) AS n FROM images WHERE folder_id = ?", (r["id"],)
-        ).fetchone()["n"]
+        is_recursive = bool(r["recursive"])
+        # 各フォルダの画像件数を添える。recursive=False の場合は「現在グリッドに
+        # 出る件数 (= 直下のみ)」と整合させる (UI 上の見え方とのズレ防止)。
+        # DB レコード自体は保持されているので、recursive=True に戻すと
+        # サブフォルダの画像も即時復活する。
+        if is_recursive:
+            cnt = conn.execute(
+                "SELECT COUNT(*) AS n FROM images WHERE folder_id = ?", (r["id"],)
+            ).fetchone()["n"]
+        else:
+            folder_norm = r["path"].rstrip("/\\")
+            paths = conn.execute(
+                "SELECT path FROM images WHERE folder_id = ?", (r["id"],)
+            ).fetchall()
+            cnt = sum(
+                1 for row in paths
+                if str(Path(row["path"]).parent).rstrip("/\\") == folder_norm
+            )
         out.append({
             "id": r["id"],
             "path": r["path"],
@@ -85,8 +106,111 @@ def list_folders(conn=Depends(get_conn)) -> list[dict[str, Any]]:
             "label_raw": r["label"],
             "added_at": r["added_at"],
             "image_count": cnt,
+            "recursive": is_recursive,
         })
     return out
+
+
+# ---------- folder picker (OS ネイティブのフォルダ選択ダイアログ) ----------
+
+class PickDirRequest(BaseModel):
+    """フォルダ選択ダイアログの初期表示パス (省略時はホーム)。"""
+    initial_dir: str | None = None
+
+
+@router.post("/api/pick-dir")
+def pick_dir(body: PickDirRequest | None = None) -> dict[str, str | None]:
+    """サーバマシン上で Tkinter のフォルダ選択ダイアログを開き、選択された
+    絶対パスを返す。ComfyDir はローカル常駐アプリ前提なので、サーバ = ユーザー PC で
+    成立する。ブラウザの File API ではフルパスを取得できない制約への回避策。
+
+    実装:
+      - Tkinter は Tcl のスレッド制約があり、uvicorn の worker thread で
+        直接 mainloop を走らせると Windows のフォーカスや z-order が壊れる。
+      - そのため別 subprocess (pythonw.exe -c "...") を 1 度だけ起動し、
+        子プロセス内で `filedialog.askdirectory` を完結させて stdout で
+        パスを返す。子プロセスは GUI ダイアログ閉鎖と同時に終了するので、
+        ゾンビにならない。
+      - Windows + pythonw 配下なので、子プロセスは新規 console を割り当てない
+        (CREATE_NO_WINDOW は念のため付与)。
+
+    日本語パス対応の徹底 (Windows 日本語環境 = CP932 デフォルト):
+      - 子プロセスの sys.stdout を utf-8 に reconfigure する (Python 3.7+)
+      - 親に PYTHONIOENCODING=utf-8 を environ で渡す (reconfigure 前に効く保険)
+      - subprocess.run 側も encoding="utf-8" + errors="strict" でデコード厳格化
+        (errors="replace" にしてしまうと `?` で埋まって気付けないので strict)
+      - これらが揃わないと「H:\\マイドライブ\\...」が `H:/?}?C?h???` のように
+        文字化けする (2026-05-21 当該事故の再発防止)
+    """
+    initial_dir = (body.initial_dir if body else None) or str(Path.home())
+    # initial_dir はそのまま Python リテラルに埋めると Windows パスの '\' で
+    # SyntaxError を起こすため、repr() で安全に文字列リテラル化する。
+    # repr() は Python 3 では Unicode を escape せずに保持する (str(マイドライブ) → "'マイドライブ'")。
+    code = (
+        "import sys\n"
+        # 子プロセスの stdout を utf-8 に固定 (Windows の cp932 fallback を封じる)
+        "try:\n"
+        "    sys.stdout.reconfigure(encoding='utf-8')\n"
+        "except AttributeError:\n"
+        "    pass\n"
+        "import tkinter as tk\n"
+        "from tkinter import filedialog\n"
+        "root = tk.Tk()\n"
+        "root.withdraw()\n"
+        "root.attributes('-topmost', True)\n"
+        f"p = filedialog.askdirectory(title='ComfyDir: フォルダを選択', initialdir={initial_dir!r}, mustexist=True)\n"
+        "root.destroy()\n"
+        "sys.stdout.write(p or '')\n"
+    )
+
+    # 現在動いているのが pythonw.exe ならそれを使う。pythonw が見つからなければ
+    # 通常の python を使う (この場合一瞬コンソールが出る可能性があるが、
+    # Tkinter 操作中はサーバスレッドはブロックされるだけで支障なし)。
+    here = Path(sys.executable)
+    pyw = here.with_name("pythonw.exe") if here.name.lower() != "pythonw.exe" else here
+    if not pyw.exists():
+        pyw = here
+
+    # Windows でのみ CREATE_NO_WINDOW を渡す (Linux/Mac では未定義属性なので分岐)
+    creation_flags = 0
+    if sys.platform == "win32":
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    # 子プロセスに UTF-8 I/O を強制する環境変数。reconfigure と二重で効かせる。
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"  # 3.7+ の UTF-8 mode (fs encoding も含めて utf-8 に)
+
+    try:
+        res = subprocess.run(
+            [str(pyw), "-c", code],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",  # 化けたら例外で気付けるように strict
+            timeout=300,  # ユーザーが Explorer で迷う時間を見越して 5 分
+            creationflags=creation_flags,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return {"path": None}
+    except UnicodeDecodeError as e:
+        # ここに来たら「子プロセスが utf-8 で吐けていない」= 設定漏れ。
+        # ログを残してフロントには 500 を返す (黙って文字化けデータを渡さない)。
+        log.warning("フォルダ選択結果の UTF-8 デコードに失敗: %s", e)
+        raise HTTPException(status_code=500, detail=f"フォルダパスの文字エンコードに失敗: {e}")
+    except OSError as e:
+        log.warning("フォルダ選択ダイアログの起動に失敗: %s", e)
+        raise HTTPException(status_code=500, detail=f"フォルダ選択ダイアログの起動に失敗しました: {e}")
+
+    if res.returncode != 0:
+        log.warning(
+            "フォルダ選択 subprocess が異常終了: code=%s, stderr=%s",
+            res.returncode, (res.stderr or "").strip(),
+        )
+
+    path = (res.stdout or "").strip()
+    return {"path": path or None}
 
 
 @router.post("/api/folders")
@@ -102,13 +226,14 @@ def create_folder(body: FolderCreate, conn=Depends(get_conn)) -> dict[str, Any]:
     if existing:
         raise HTTPException(status_code=409, detail="このフォルダは既に登録済みです")
 
-    row = repo.add_folder(conn, abs_path, body.label)
+    row = repo.add_folder(conn, abs_path, body.label, recursive=body.recursive)
     folder_id = int(row["id"])
+    rec = bool(row["recursive"])
 
     # バックグラウンドでフルスキャン + watchdog 開始
     def _bootstrap() -> None:
-        scanner.full_scan(folder_id, abs_path)
-        scanner.manager.start_folder(folder_id, abs_path)
+        scanner.full_scan(folder_id, abs_path, recursive=rec)
+        scanner.manager.start_folder(folder_id, abs_path, recursive=rec)
     threading.Thread(target=_bootstrap, daemon=True).start()
 
     return {
@@ -118,6 +243,7 @@ def create_folder(body: FolderCreate, conn=Depends(get_conn)) -> dict[str, Any]:
         "label_raw": row["label"],
         "added_at": row["added_at"],
         "image_count": 0,
+        "recursive": rec,
     }
 
 
@@ -161,17 +287,26 @@ def update_folder(
         new_path=new_path,
         new_label=new_label,
         label_provided=body.label_provided,
+        new_recursive=body.recursive,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="フォルダが見つかりません")
 
-    # path が変わったときだけ watchdog を再起動 + バックグラウンド再スキャン
-    if new_path is not None and new_path != current["path"]:
+    path_changed = new_path is not None and new_path != current["path"]
+    # recursive を変更したときは Observer 自体を作り直す必要がある
+    # (watchdog の Observer は recursive フラグを途中で差し替えられない)
+    rec_changed = body.recursive is not None
+    rec = bool(updated["recursive"])
+    target_path = updated["path"]
+
+    if path_changed or rec_changed:
         scanner.manager.stop_folder(folder_id)
 
         def _bootstrap() -> None:
-            scanner.full_scan(folder_id, new_path)
-            scanner.manager.start_folder(folder_id, new_path)
+            # path 変更時のみ全件再スキャンが必要 (recursive のみ変更でも
+            # 「直下のみ ⇄ 再帰」で対象集合が変わるので再スキャンする)。
+            scanner.full_scan(folder_id, target_path, recursive=rec)
+            scanner.manager.start_folder(folder_id, target_path, recursive=rec)
         threading.Thread(target=_bootstrap, daemon=True).start()
 
     cnt = conn.execute(
@@ -184,7 +319,9 @@ def update_folder(
         "label_raw": updated["label"],
         "added_at": updated["added_at"],
         "image_count": cnt,
-        "path_changed": new_path is not None and new_path != current["path"],
+        "recursive": rec,
+        "path_changed": path_changed,
+        "recursive_changed": rec_changed,
     }
 
 
@@ -202,11 +339,12 @@ def rescan_folder(folder_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
     f = repo.get_folder(conn, folder_id)
     if f is None:
         raise HTTPException(status_code=404, detail="フォルダが見つかりません")
+    rec = bool(f["recursive"])
 
     def _task() -> None:
-        scanner.full_scan(folder_id, f["path"])
+        scanner.full_scan(folder_id, f["path"], recursive=rec)
         # まだ Observer が起動していなければ開始
-        scanner.manager.start_folder(folder_id, f["path"])
+        scanner.manager.start_folder(folder_id, f["path"], recursive=rec)
     threading.Thread(target=_task, daemon=True).start()
     return {"started": True}
 
@@ -233,6 +371,14 @@ def list_images(
             return []
         tag_ids.append(tid)
 
+    # フォルダが recursive=False のときは、直下のレコードだけを返す。
+    # DB レコード自体は保持しているので、recursive=True に戻せば即時復活する。
+    direct_root: str | None = None
+    if folder_id is not None:
+        folder_row = repo.get_folder(conn, folder_id)
+        if folder_row is not None and not bool(folder_row["recursive"]):
+            direct_root = folder_row["path"]
+
     rows = repo.search_images(
         conn,
         folder_id=folder_id,
@@ -242,6 +388,7 @@ def list_images(
         direction=direction,
         prompt_query=q.strip() or None,
         memo_query=qm.strip() or None,
+        direct_children_of=direct_root,
     )
     return [
         {

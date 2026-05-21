@@ -300,12 +300,41 @@ def _build_icon() -> pystray.Icon:
 
 # ---------------- main ----------------
 
+def _is_existing_instance_listening() -> bool:
+    """既存 ComfyDir が `HOST:PORT` で LISTEN 中なら True。
+
+    `connect` で接続できる = 既にどこかのプロセスが bind 済み。
+    多重起動を防ぐためのシングルトンチェックに使う。
+    過去に起動済み launcher.py が「uvicorn の bind 失敗を黙殺して tray だけ
+    生き残る」累積 (2026-05-21 確認: 14 プロセス残存) を構造的に塞ぐ目的。
+    """
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        try:
+            s.connect((HOST, PORT))
+            return True
+        except OSError:
+            return False
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     log.info("launcher start: URL=%s", URL)
+
+    # シングルトン保護: 既に ComfyDir が起動済みなら新サーバを起動せず、
+    # 既存ウィンドウを前面化 (or 新ウィンドウ作成) して自分は即終了する。
+    # start.vbs を二重ダブルクリックしても pythonw / uvicorn / tray が
+    # 累積しないようにするための入口ガード。
+    if _is_existing_instance_listening():
+        log.info("既存の ComfyDir を %s で検出 → 既存に処理を委譲して終了", URL)
+        try:
+            open_or_focus_window()
+        except Exception as e:
+            log.warning("既存ウィンドウの前面化に失敗 (継続して終了): %s", e)
+        return 0
 
     start_server_thread()
 

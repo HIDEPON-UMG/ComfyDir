@@ -224,6 +224,7 @@ if ("serviceWorker" in navigator) {
       state.detail = null;
       renderGrid();
       renderRightPane();
+      reflectRecursiveToggle();
       savePrefs();
       return;
     }
@@ -231,6 +232,7 @@ if ("serviceWorker" in navigator) {
       state.currentFolderId = state.folders[0].id;
     }
     sel.value = state.currentFolderId;
+    reflectRecursiveToggle();
     savePrefs();
     await reloadImages();
   }
@@ -239,20 +241,27 @@ if ("serviceWorker" in navigator) {
     const dlg = $("#addFolderDialog");
     $("#folderPathInput").value = "";
     $("#folderLabelInput").value = "";
+    // 新規登録のデフォルトは再帰 ON (従来挙動)
+    $("#folderRecursiveInput").checked = true;
     dlg.showModal();
     dlg.onclose = async () => {
       if (dlg.returnValue !== "default") return;
       const p = $("#folderPathInput").value.trim();
       if (!p) return;
       const label = $("#folderLabelInput").value.trim() || null;
+      const recursive = $("#folderRecursiveInput").checked;
       try {
         setStatus("フォルダ追加中...");
         await api("/api/folders", {
           method: "POST",
-          body: JSON.stringify({ path: p, label }),
+          body: JSON.stringify({ path: p, label, recursive }),
         });
         await reloadFolders();
-        setStatus("フォルダを追加しました (バックグラウンドでスキャン中)");
+        setStatus(
+          recursive
+            ? "フォルダを追加しました (サブディレクトリ含めてスキャン中)"
+            : "フォルダを追加しました (直下のみスキャン中)"
+        );
       } catch (e) {
         alert("失敗: " + e.message);
         setStatus("");
@@ -295,6 +304,97 @@ if ("serviceWorker" in navigator) {
     };
   }
 
+  // 現在表示中フォルダの recursive 状態をツールバートグルに反映する。
+  // - フォルダ未選択 → 無効化
+  // - recursive=true (デフォルト) → aria-pressed=true / "サブ含む"
+  // - recursive=false → aria-pressed=false / "直下のみ"
+  function reflectRecursiveToggle() {
+    const btn = $("#btnRecursiveToggle");
+    const label = $("#recursiveToggleLabel");
+    if (!btn || !label) return;
+    if (state.currentFolderId == null) {
+      btn.disabled = true;
+      btn.setAttribute("aria-pressed", "false");
+      label.textContent = "サブ含む";
+      btn.title = "フォルダを選択するとサブディレクトリ監視を切り替えられます";
+      return;
+    }
+    const f = state.folders.find(x => x.id === state.currentFolderId);
+    // recursive 未定義時 (古い API レスポンス互換) は true 扱い
+    const rec = !f || f.recursive !== false;
+    btn.disabled = false;
+    btn.setAttribute("aria-pressed", rec ? "true" : "false");
+    label.textContent = rec ? "サブ含む" : "直下のみ";
+    btn.title = rec
+      ? "クリックで「直下のみ」表示に切替 (サブフォルダ画像は非表示。DB・タグ・メモは保持)"
+      : "クリックで「サブディレクトリも含む」表示に切替 (配下も一覧表示)";
+  }
+
+  // 「参照...」ボタンとパス入力欄を結びつけるヘルパー。
+  // クリック → サーバが Tkinter のフォルダ選択ダイアログ (OS ネイティブ) を開く
+  // → ユーザーが選んだ絶対パスを <input> に書き込む。キャンセル時は何もしない。
+  function bindFolderPicker(btnSelector, inputSelector) {
+    const btn = $(btnSelector);
+    const input = $(inputSelector);
+    if (!btn || !input) return;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        const initial = input.value.trim() || null;
+        const res = await api("/api/pick-dir", {
+          method: "POST",
+          body: JSON.stringify({ initial_dir: initial }),
+        });
+        if (res && res.path) {
+          input.value = res.path;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        // path が null (キャンセル) のときは入力欄を触らない
+      } catch (e) {
+        alert("フォルダ選択に失敗しました: " + (e.message || e));
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }
+
+  // ツールバーの「サブ含む / 直下のみ」トグル押下時のハンドラ。
+  // どちらの方向に切り替えても DB レコードは保持される (タグ・メモも残る)。
+  // OFF: サブフォルダ配下のレコードはグリッド非表示になるだけ。
+  // ON:  保持済みレコードは即時復活、未スキャンファイルだけ追加で取り込む。
+  async function toggleRecursiveForCurrentFolder() {
+    if (state.currentFolderId == null) return;
+    const f = state.folders.find(x => x.id === state.currentFolderId);
+    if (!f) return;
+    const cur = f.recursive !== false;
+    const next = !cur;
+    const msg = next
+      ? `「${f.label || f.path}」をサブディレクトリも含めて監視に切り替えますか?\n` +
+        `配下フォルダの画像も一覧に表示されます (未取込ファイルは再スキャンで追加)。`
+      : `「${f.label || f.path}」を直下のみの表示に切り替えますか?\n` +
+        `サブフォルダ配下の画像は一覧から隠れます (DB・タグ・メモは保持。ON に戻せば即復活)。`;
+    if (!confirm(msg)) return;
+    try {
+      setStatus(next ? "サブ含む に切替中..." : "直下のみ に切替中...");
+      await api(`/api/folders/${state.currentFolderId}`, {
+        method: "PATCH",
+        // label_provided=false を明示しておく (label 系の意図しない上書きを防ぐ)
+        body: JSON.stringify({ recursive: next, label_provided: false }),
+      });
+      await reloadFolders();
+      setStatus(
+        next
+          ? "サブ含む に切り替えました (一覧を再構築中)"
+          : "直下のみ に切り替えました (サブフォルダ画像はレコード保持のまま非表示)"
+      );
+    } catch (e) {
+      alert("失敗: " + e.message);
+      setStatus("");
+      // 失敗時は元の状態を再描画 (UI のチラつき防止のため reflect だけ)
+      reflectRecursiveToggle();
+    }
+  }
+
   async function removeCurrentFolder() {
     if (state.currentFolderId == null) return;
     const f = state.folders.find(x => x.id === state.currentFolderId);
@@ -305,13 +405,80 @@ if ("serviceWorker" in navigator) {
     await reloadTags();
   }
 
+  // 再スキャン中の表現を 2 つのパーツに分離:
+  //   1. ボタンのアイコン回転 = 「全フェーズ通じて稼働中」のサイン
+  //   2. ツールバー直下の進捗バー = 「index フェーズで done/total が分かる時だけ」表示
+  // → enumerate (ファイル列挙) / cleanup (DB 掃除) 中はバー非表示、アイコン回転のみ。
+  //    indeterminate な流れるバーは廃止 (左右にブレて進捗バーに見えない問題対応)。
+  function setRescanIndicator(on) {
+    const btn = $("#btnRescan");
+    if (btn) {
+      btn.classList.toggle("is-rescanning", !!on);
+      btn.disabled = !!on;
+      btn.setAttribute("aria-busy", on ? "true" : "false");
+      btn.title = on ? "再スキャン中..." : "再スキャン";
+    }
+    const bar = $("#rescanProgress");
+    if (bar) {
+      // バーは index フェーズに入ってから初めて出す。OFF 時は完全リセット。
+      bar.toggleAttribute("hidden", true);
+      bar.setAttribute("aria-busy", "false");
+      bar.style.removeProperty("--rescan-progress-pct");
+      bar.removeAttribute("aria-valuenow");
+      bar.removeAttribute("aria-valuemax");
+      bar.removeAttribute("aria-valuetext");
+    }
+  }
+
+  // SSE `scan_progress` 受信時の表示更新。バーは「左端から右へ単調に伸びる」
+  // 一方向のみ動かす:
+  //   phase=enumerate (total 未確定)  → バー非表示 (アイコン回転だけで表現)
+  //   phase=index    (total 確定)    → バー表示 + width = done/total
+  //   phase=cleanup  (DB 掃除中)     → バー表示 + 100% で静止 (戻さない)
+  function setRescanProgress(done, total, phase) {
+    const bar = $("#rescanProgress");
+    if (!bar) return;
+    if (phase === "index" && total > 0) {
+      const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+      bar.toggleAttribute("hidden", false);
+      bar.setAttribute("aria-busy", "true");
+      bar.style.setProperty("--rescan-progress-pct", String(pct));
+      bar.setAttribute("aria-valuenow", String(done));
+      bar.setAttribute("aria-valuemax", String(total));
+      bar.setAttribute("aria-valuetext", `${done} / ${total} ファイル (${pct}%)`);
+    } else if (phase === "cleanup") {
+      // 末尾の DB 掃除フェーズ。100% で静止表示 (一旦伸ばしたバーを縮めない)
+      bar.toggleAttribute("hidden", false);
+      bar.setAttribute("aria-busy", "true");
+      bar.style.setProperty("--rescan-progress-pct", "100");
+      bar.setAttribute("aria-valuenow", String(total));
+      bar.setAttribute("aria-valuemax", String(total));
+      bar.setAttribute("aria-valuetext", `DB 掃除中`);
+    } else {
+      // enumerate (total 未確定) → バーは出さない。アイコン回転だけで稼働を示す。
+      bar.toggleAttribute("hidden", true);
+      bar.setAttribute("aria-busy", "true");
+      bar.style.removeProperty("--rescan-progress-pct");
+      bar.removeAttribute("aria-valuenow");
+      bar.removeAttribute("aria-valuemax");
+      bar.removeAttribute("aria-valuetext");
+    }
+  }
+
   async function rescanCurrentFolder() {
     if (state.currentFolderId == null) return;
     setStatus("再スキャン中...");
+    setRescanIndicator(true);
     // サーバはバックグラウンドで full_scan を回し、完了時に SSE `folder_rescanned`
     // を emit する。受信側で reloadImages() + reloadFolders() を実行するため、
     // ここでは追加の reload は不要 (固定 setTimeout に頼らないようにする)。
-    await api(`/api/folders/${state.currentFolderId}/rescan`, { method: "POST" });
+    try {
+      await api(`/api/folders/${state.currentFolderId}/rescan`, { method: "POST" });
+    } catch (e) {
+      // 開始リクエスト自体が失敗した場合は SSE が来ないので、ここでだけ戻す。
+      setRescanIndicator(false);
+      setStatus(`再スキャンの開始に失敗しました: ${e?.message ?? e}`);
+    }
   }
 
   // ---------------- 画像一覧 ----------------
@@ -1634,6 +1801,27 @@ if ("serviceWorker" in navigator) {
         }
       } catch {}
     });
+    // 再スキャン進捗 (full_scan の各フェーズ): 現在表示中フォルダだけ反映。
+    // determinate / indeterminate の切替は setRescanProgress 側で判断。
+    es.addEventListener("scan_progress", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.folder_id !== state.currentFolderId) return;
+        const p = data.payload || {};
+        const done = p.done ?? 0;
+        const total = p.total ?? 0;
+        const phase = p.phase || "index";
+        setRescanProgress(done, total, phase);
+        if (phase === "index" && total > 0) {
+          setStatus(`再スキャン中... (${done} / ${total})`);
+        } else if (phase === "enumerate") {
+          setStatus("再スキャン中... (ファイル一覧を取得中)");
+        } else if (phase === "cleanup") {
+          setStatus("再スキャン中... (DB の掃除)");
+        }
+      } catch {}
+    });
+
     // 再スキャン完了: full_scan は watchdog が取り逃した追加/削除も同期するので、
     // 現在表示中フォルダなら一覧を取り直す。フォルダ自体の image_count も更新。
     es.addEventListener("folder_rescanned", (e) => {
@@ -1652,6 +1840,10 @@ if ("serviceWorker" in navigator) {
           setStatus(`再スキャン完了 (追加/更新 ${added} 件, 削除 ${removed} 件)`);
         }
       } catch {}
+      // 完了 (および missing_folder 等の失敗終了) でアイコン回転を必ず止める。
+      // SSE がフォルダ単位で来るため、対象が現在表示中かに関わらず止める方が
+      // 安全 (操作起点となるのは「現在のフォルダ」のみのため)。
+      setRescanIndicator(false);
     });
     es.onerror = () => {};
   }
@@ -1707,8 +1899,17 @@ if ("serviceWorker" in navigator) {
       state.currentFolderId = parseInt(e.target.value, 10);
       state.selected.clear();
       savePrefs();
+      reflectRecursiveToggle();
       reloadImages();
     };
+
+    // ツールバートグル: 現在表示中フォルダの recursive を即時切替
+    $("#btnRecursiveToggle").onclick = toggleRecursiveForCurrentFolder;
+
+    // 追加・編集ダイアログの「参照...」ボタン: サーバ経由でローカル Tkinter の
+    // フォルダ選択ダイアログを起動し、選択された絶対パスを入力欄にセットする。
+    bindFolderPicker("#btnPickFolderAdd", "#folderPathInput");
+    bindFolderPicker("#btnPickFolderEdit", "#folderEditPathInput");
 
     $("#orderSelect").onchange = (e) => {
       const [order, dir] = e.target.value.split("|");

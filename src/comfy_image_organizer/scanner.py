@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class ScanEvent:
     """SSE で流すイベント。"""
-    type: str           # 'image_added' | 'image_removed' | 'image_updated' | 'folder_rescanned'
+    type: str           # 'image_added' | 'image_removed' | 'image_updated' | 'scan_progress' | 'folder_rescanned'
     folder_id: int | None = None
     image_id: int | None = None
     payload: dict[str, Any] = field(default_factory=dict)
@@ -106,9 +106,14 @@ def _index_one(folder_id: int, file_path: Path) -> dict[str, Any] | None:
     }
 
 
-def full_scan(folder_id: int, folder_path: str) -> int:
+def full_scan(folder_id: int, folder_path: str, *, recursive: bool = True) -> int:
     """指定フォルダを 1 回フルスキャンし、追加/更新件数を返す。
 
+    recursive=True: rglob でサブディレクトリ配下まで再帰スキャン (従来挙動)。
+    recursive=False: glob で直下のファイルだけスキャン (サブフォルダは無視)。
+
+    進捗は `scan_progress` (phase = enumerate / index / cleanup) を 200ms 間隔で
+    スロットル emit し、フロントの determinate progress bar に流す。
     完了時に `folder_rescanned` SSE イベントを emit する。watchdog の取り逃がし分
     (再スキャン時に増減した画像) をフロントに通知し、UI のグリッドを reload させる
     ためのフック。
@@ -124,21 +129,77 @@ def full_scan(folder_id: int, folder_path: str) -> int:
         ))
         return 0
 
-    # 現在ディスク上にあるファイル
+    # フェーズ 1: ファイル列挙。大量フォルダだと rglob だけで数秒かかるので、
+    # 「列挙中 (total 未確定)」を最初に通知して indeterminate 表示にさせる。
+    manager._emit(ScanEvent(
+        type="scan_progress",
+        folder_id=folder_id,
+        payload={"done": 0, "total": 0, "phase": "enumerate"},
+    ))
+    iterator = folder.rglob("*") if recursive else folder.glob("*")
+    image_paths: list[Path] = [p for p in iterator if p.is_file() and _is_image(p)]
+    total = len(image_paths)
+
+    # フェーズ 2: インデックス。total 確定 → determinate モードへ遷移。
+    manager._emit(ScanEvent(
+        type="scan_progress",
+        folder_id=folder_id,
+        payload={"done": 0, "total": total, "phase": "index"},
+    ))
+
     on_disk: set[str] = set()
     count = 0
-    for p in folder.rglob("*"):
-        if p.is_file() and _is_image(p):
-            on_disk.add(str(p))
-            if _index_one(folder_id, p) is not None:
-                count += 1
+    last_emit = time.monotonic()
+    for i, p in enumerate(image_paths, start=1):
+        on_disk.add(str(p))
+        if _index_one(folder_id, p) is not None:
+            count += 1
+        # スロットル: 200ms or 最終件で必ず emit。
+        # 全件ごとに emit すると SSE/JSON で帯域を食うので頻度を絞る。
+        now = time.monotonic()
+        if now - last_emit >= 0.2 or i == total:
+            manager._emit(ScanEvent(
+                type="scan_progress",
+                folder_id=folder_id,
+                payload={"done": i, "total": total, "phase": "index"},
+            ))
+            last_emit = now
 
-    # DB にあるけれど消えたファイルを掃除
+    # フェーズ 3: 削除掃除。件数が予想できないので indeterminate 風に再度通知。
+    manager._emit(ScanEvent(
+        type="scan_progress",
+        folder_id=folder_id,
+        payload={"done": total, "total": total, "phase": "cleanup"},
+    ))
+
+    # DB にあるけれど「ディスク上から実際に消えた」ファイルだけを掃除する。
+    # ポイント:
+    #   - recursive=True (再帰スキャン): 今回 on_disk に含まれなかった = ディスクから消えた、
+    #     とみなして従来どおり削除。
+    #   - recursive=False (直下のみ): サブフォルダ配下のレコードは「今回の対象外」だけで
+    #     ファイル自体は実在する可能性が高い。ここで削除すると Myタグ / メモ /
+    #     sort_order などのユーザーデータが連動削除されてしまうので、
+    #     **DB レコードは保持する**。表示側 (search_images の direct_children_of)
+    #     で folder 直下のレコードだけ拾うフィルタを掛けるので、グリッドからは
+    #     自然に消える (再度 recursive=True に戻したら即復活する)。
+    #     ただし「直下に該当ファイルがあったはずなのにディスクから消えた」ものは
+    #     現状の挙動どおり削除する (= recursive=True と同じく実消失の整合性は取る)。
+    folder_norm = str(folder).rstrip("/\\")
     removed = 0
     conn = connect()
     try:
         for db_path in repo.list_image_paths_in_folder(conn, folder_id):
-            if db_path not in on_disk:
+            if db_path in on_disk:
+                continue
+            if recursive:
+                repo.delete_image_by_path(conn, db_path)
+                removed += 1
+                continue
+            # recursive=False かつ on_disk 外: サブフォルダ配下は残す
+            p = Path(db_path)
+            parent_norm = str(p.parent).rstrip("/\\")
+            if parent_norm == folder_norm and not p.exists():
+                # 直下にあったがディスクから消えたファイル → 削除
                 repo.delete_image_by_path(conn, db_path)
                 removed += 1
     finally:
@@ -237,7 +298,8 @@ class ScannerManager:
         conn = connect()
         try:
             for f in repo.list_folders(conn):
-                self.start_folder(int(f["id"]), f["path"])
+                rec = bool(f["recursive"]) if "recursive" in f.keys() else True
+                self.start_folder(int(f["id"]), f["path"], recursive=rec)
         finally:
             conn.close()
 
@@ -253,8 +315,14 @@ class ScannerManager:
 
     # フォルダ単位 -------------------------------------------------
 
-    def start_folder(self, folder_id: int, folder_path: str) -> None:
-        """フォルダを Observer に追加する (重複は無視)。"""
+    def start_folder(
+        self, folder_id: int, folder_path: str, *, recursive: bool = True
+    ) -> None:
+        """フォルダを Observer に追加する (重複は無視)。
+
+        recursive=False のときは watchdog も直下のみ監視するので、サブフォルダの
+        変更はイベントとして上がらず DB にも反映されない (full_scan の挙動と一致)。
+        """
         with self._lock:
             if folder_id in self._observers:
                 return
@@ -262,11 +330,14 @@ class ScannerManager:
                 log.warning("フォルダが存在しないので監視を開始しません: %s", folder_path)
                 return
             obs = Observer()
-            obs.schedule(_Handler(folder_id, self), folder_path, recursive=True)
+            obs.schedule(_Handler(folder_id, self), folder_path, recursive=recursive)
             obs.daemon = True
             obs.start()
             self._observers[folder_id] = obs
-            log.info("watchdog 開始: folder_id=%s, path=%s", folder_id, folder_path)
+            log.info(
+                "watchdog 開始: folder_id=%s, path=%s, recursive=%s",
+                folder_id, folder_path, recursive,
+            )
 
     def stop_folder(self, folder_id: int) -> None:
         with self._lock:

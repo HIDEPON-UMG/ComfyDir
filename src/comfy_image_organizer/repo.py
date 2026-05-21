@@ -23,26 +23,31 @@ log = logging.getLogger(__name__)
 
 def list_folders(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT id, path, label, added_at FROM folders ORDER BY added_at ASC"
+        "SELECT id, path, label, added_at, recursive FROM folders ORDER BY added_at ASC"
     ).fetchall()
 
 
 def get_folder(conn: sqlite3.Connection, folder_id: int) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT id, path, label, added_at FROM folders WHERE id = ?", (folder_id,)
+        "SELECT id, path, label, added_at, recursive FROM folders WHERE id = ?",
+        (folder_id,),
     ).fetchone()
 
 
 def add_folder(
-    conn: sqlite3.Connection, path: str, label: str | None
+    conn: sqlite3.Connection,
+    path: str,
+    label: str | None,
+    *,
+    recursive: bool = True,
 ) -> sqlite3.Row:
     now = time.time()
     cur = conn.execute(
-        "INSERT INTO folders (path, label, added_at) VALUES (?, ?, ?)",
-        (path, label, now),
+        "INSERT INTO folders (path, label, added_at, recursive) VALUES (?, ?, ?, ?)",
+        (path, label, now, 1 if recursive else 0),
     )
     return conn.execute(
-        "SELECT id, path, label, added_at FROM folders WHERE id = ?",
+        "SELECT id, path, label, added_at, recursive FROM folders WHERE id = ?",
         (cur.lastrowid,),
     ).fetchone()
 
@@ -59,12 +64,14 @@ def update_folder(
     new_path: str | None = None,
     new_label: str | None = None,
     label_provided: bool = False,
+    new_recursive: bool | None = None,
 ) -> sqlite3.Row | None:
-    """登録フォルダの label / path を更新する。
+    """登録フォルダの label / path / recursive を更新する。
 
     - new_path が現在の path と異なる場合は、配下 images の path / filename も
       新パス配下に書き換える (Windows のドライブ文字が入れ替わるケースは未対応)。
     - label_provided=True のときに限り label を上書き (None なら NULL に戻す)。
+    - new_recursive が None でなければ recursive フラグを上書き。
     - 戻り値は更新後の folders 行 (見つからなければ None)。
     """
     cur = conn.execute(
@@ -104,8 +111,14 @@ def update_folder(
             (new_label, folder_id),
         )
 
+    if new_recursive is not None:
+        conn.execute(
+            "UPDATE folders SET recursive = ? WHERE id = ?",
+            (1 if new_recursive else 0, folder_id),
+        )
+
     return conn.execute(
-        "SELECT id, path, label, added_at FROM folders WHERE id = ?",
+        "SELECT id, path, label, added_at, recursive FROM folders WHERE id = ?",
         (folder_id,),
     ).fetchone()
 
@@ -239,6 +252,7 @@ def search_images(
     direction: str,          # 'asc' | 'desc'
     prompt_query: str | None = None,  # ポジ/ネガに対する部分一致 (大小区別なし)
     memo_query: str | None = None,    # メモ本文に対する部分一致 (大小区別なし)
+    direct_children_of: str | None = None,
 ) -> list[sqlite3.Row]:
     where: list[str] = []
     params: list[Any] = []
@@ -299,7 +313,19 @@ def search_images(
         f"FROM images i {where_sql} "
         f"ORDER BY {order_col} {dir_sql}, i.id ASC"
     )
-    return conn.execute(sql, params).fetchall()
+    rows = conn.execute(sql, params).fetchall()
+
+    # 直下のみフィルタ: フォルダの recursive=False 設定時に、
+    # サブフォルダ配下の画像レコード (DB 上は保持されている) を表示から外す。
+    # Python 側 post-filter にしたのは、Windows / Unix 両対応のパス分離が
+    # SQL でやりにくいのと、件数規模 (1 フォルダ数千件) なら十分速いため。
+    if direct_children_of:
+        folder_norm = direct_children_of.rstrip("/\\")
+        rows = [
+            r for r in rows
+            if str(Path(r["path"]).parent).rstrip("/\\") == folder_norm
+        ]
+    return rows
 
 
 def update_image_path(

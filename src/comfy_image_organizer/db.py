@@ -12,7 +12,10 @@ CREATE TABLE IF NOT EXISTS folders (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   path        TEXT    NOT NULL UNIQUE,
   label       TEXT,
-  added_at    REAL    NOT NULL
+  added_at    REAL    NOT NULL,
+  -- 1 = サブディレクトリも再帰スキャン (既存挙動・デフォルト) /
+  -- 0 = 直下のみスキャン。watchdog Observer の recursive と同期する。
+  recursive   INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS images (
@@ -107,6 +110,10 @@ def _migrate_missing_columns(conn: sqlite3.Connection) -> None:
         # table -> [(column, "<type> [DEFAULT ...]")]
         "images": [
             ("memo", "TEXT"),
+        ],
+        "folders": [
+            # 既存登録フォルダは recursive=1 (従来挙動) で埋める
+            ("recursive", "INTEGER NOT NULL DEFAULT 1"),
         ],
     }
     for table, cols in expected.items():
