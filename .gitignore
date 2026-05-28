@@ -28,3 +28,6 @@ venv/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# CodeGraph ローカル index (tree-sitter SQLite, ローカル生成物)
+/.codegraph/

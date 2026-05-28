@@ -96,6 +96,11 @@
       background: #2D2E33;
       color: var(--color-fg-primary);
     }
+    .status {
+      margin: 16px 0 0;
+      font-size: 13px;
+      color: var(--color-accent);
+    }
     .footer {
       margin-top: 24px;
       padding-top: 16px;
@@ -119,19 +124,71 @@
     <p class="lead">バックエンド (uvicorn) が起動していないか、ネットワークの一時的な問題で <code>127.0.0.1:8765</code> に到達できませんでした。</p>
 
     <ol class="steps">
-      <li>タスクトレイの ComfyDir アイコンが残っているか確認 (<strong>右クリック → 終了 してから再起動</strong>)</li>
-      <li>無ければ <code>start.vbs</code> をダブルクリックで起動</li>
-      <li>起動後にこのページの <strong>再試行</strong> ボタンを押す</li>
+      <li>下の <strong>ComfyDir を起動</strong> ボタンを押す (<code>start.vbs</code> を実行します。初回はブラウザの確認ダイアログで「許可」を選択)</li>
+      <li>タスクトレイに ComfyDir アイコンが出たら、サーバの起動を自動で待って画面が切り替わります</li>
+      <li>切り替わらないときは <code>start.vbs</code> をダブルクリックしてから <strong>再試行</strong></li>
     </ol>
 
     <div class="actions">
-      <button class="btn-primary" onclick="location.reload()">再試行</button>
+      <button class="btn-primary" id="btnLaunch">ComfyDir を起動</button>
+      <button class="btn-secondary" onclick="location.reload()">再試行</button>
       <button class="btn-secondary" onclick="location.href='/'">トップへ</button>
     </div>
+
+    <p class="status" id="status" role="status" aria-live="polite" hidden></p>
 
     <div class="footer">
       この画面は Service Worker のキャッシュから配信されています。サーバが起動するとオンラインに戻ります。
     </div>
   </main>
+
+  <script>
+    // offline.html はバックエンド (uvicorn) 停止中に SW キャッシュから出る画面。
+    // ブラウザは .vbs を直接実行できないので、launcher.py が HKCU に登録した
+    // カスタム URL プロトコル comfydir:// を叩いて OS 側に start.vbs を起動させる。
+    // 起動後はサーバ復帰をポーリングし、立ち上がったら自動で本体へ遷移する。
+    (function () {
+      const btn = document.getElementById("btnLaunch");
+      const statusEl = document.getElementById("status");
+      let polling = false;
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+        statusEl.hidden = !text;
+      }
+
+      function startPolling() {
+        if (polling) return;
+        polling = true;
+        setStatus("ComfyDir を起動しています… サーバの応答を待っています。");
+        let tries = 0;
+        const timer = setInterval(async () => {
+          tries++;
+          try {
+            // ユニーククエリで SW の cache fallback を回避し、実際のネット到達のみ true 判定。
+            const res = await fetch("/api/folders?ping=" + Date.now(), { cache: "no-store" });
+            if (res.ok) {
+              clearInterval(timer);
+              location.replace("/");
+              return;
+            }
+          } catch (e) {
+            // まだ起動途中 → 次の試行へ
+          }
+          if (tries >= 30) {  // 約 45 秒で打ち切り
+            clearInterval(timer);
+            polling = false;
+            setStatus("自動起動を確認できませんでした。start.vbs を直接実行してから「再試行」を押してください。");
+          }
+        }, 1500);
+      }
+
+      btn.addEventListener("click", () => {
+        // カスタムプロトコルへの遷移は現在のページを離脱させない (OS ハンドラが起動するだけ)
+        location.href = "comfydir://launch";
+        startPolling();
+      });
+    })();
+  </script>
 </body>
 </html>

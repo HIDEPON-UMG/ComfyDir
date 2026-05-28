@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import winreg
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -197,6 +198,40 @@ def stop_server() -> None:
         _server.should_exit = True
 
 
+# ---------------- comfydir:// プロトコル登録 ----------------
+
+def register_url_protocol() -> None:
+    """`comfydir://` カスタム URL プロトコルを HKCU に登録する (冪等)。
+
+    オフライン画面 (offline.html) は Service Worker のキャッシュ配信なので、
+    バックエンド (uvicorn) が落ちている状態で表示される。ブラウザのサンドボックスは
+    ローカルの .vbs を直接実行できないため、画面内の「ComfyDir を起動」ボタンは
+    `location.href = 'comfydir://launch'` で OS 側のプロトコルハンドラを叩く。
+    そのハンドラとして wscript.exe + start.vbs を登録しておく。
+
+    launcher.py の起動経路 = 過去に一度でも正常起動できた = SW が登録済みなので、
+    起動のたびにここで登録し直しておけば、次回サーバが落ちたときの offline.html から
+    ワンクリックで起動し直せる。HKCU のみを書くので管理者権限は不要・可逆。
+    """
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    wscript = Path(system_root) / "System32" / "wscript.exe"
+    vbs = ROOT / "start.vbs"
+    # start.vbs は引数を見ないので %1 は付けない (URL を phantom arg として渡さない)
+    command = f'"{wscript}" "{vbs}"'
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\comfydir") as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:ComfyDir Protocol")
+            winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+        with winreg.CreateKey(
+            winreg.HKEY_CURRENT_USER, r"Software\Classes\comfydir\shell\open\command"
+        ) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command)
+        log.info("comfydir:// プロトコル登録: %s", command)
+    except OSError as e:
+        # 登録に失敗しても本体起動は続行 (offline 画面のボタンが効かないだけ)
+        log.warning("comfydir:// プロトコル登録に失敗 (継続): %s", e)
+
+
 # ---------------- ブラウザ起動 ----------------
 
 def find_browser() -> str | None:
@@ -323,6 +358,9 @@ def main() -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     log.info("launcher start: URL=%s", URL)
+
+    # offline.html の「ComfyDir を起動」ボタン用に comfydir:// を登録 (冪等・HKCU)
+    register_url_protocol()
 
     # シングルトン保護: 既に ComfyDir が起動済みなら新サーバを起動せず、
     # 既存ウィンドウを前面化 (or 新ウィンドウ作成) して自分は即終了する。

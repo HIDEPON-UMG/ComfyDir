@@ -9,7 +9,7 @@
 // VERSION を変更すると、activate 時に古い comfydir-* cache が自動で消える。
 // app.js / style.css / index.html / manifest.json を改修したら必ずインクリメントすること。
 
-const VERSION = "v20";
+const VERSION = "v21";
 const PRECACHE = `comfydir-precache-${VERSION}`;
 const RUNTIME  = `comfydir-runtime-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
