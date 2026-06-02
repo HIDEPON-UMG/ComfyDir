@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ctypes
+import http.client
 import logging
 import os
 import shutil
@@ -42,6 +43,7 @@ import pystray  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from comfy_image_organizer.config import HOST, PORT, ICON_PATH  # noqa: E402
+from comfy_image_organizer.port_registry import registry_path  # noqa: E402
 
 log = logging.getLogger("comfydir.launcher")
 
@@ -90,6 +92,12 @@ _kernel32.QueryFullProcessImageNameW.restype = ctypes.c_bool
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 _user32.EnumWindows.argtypes = [WNDENUMPROC, ctypes.c_void_p]
+
+# pythonw 起動はコンソールを持たないので、ポート衝突などの致命的事象は
+# MessageBox でユーザーに見せないと黙って終了したように見える。
+_user32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+_user32.MessageBoxW.restype = ctypes.c_int
+MB_ICONWARNING = 0x00000030
 
 SW_RESTORE = 9
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -181,15 +189,16 @@ def start_server_thread() -> None:
     _server_thread = threading.Thread(target=_server.run, daemon=True, name="uvicorn")
     _server_thread.start()
 
-    # ポート open 待ち (最大 10 秒)
+    # 自分の uvicorn が応答するまで待つ (最大 10 秒)。
+    # 重要: bare connect 成功で「起動した」と判定してはいけない。別アプリが同ポートを
+    # 先取りしていると connect は相手に成功してしまい、誤って「起動済み」と見なして
+    # ブラウザを相手アプリに誘導する事故 (2026-06-02 CCA の Basic 認証ダイアログ) を
+    # 招く。よって ComfyDir 本人の応答 (manifest に "comfydir") を確認する。
     for _ in range(50):
-        with socket.socket() as s:
-            try:
-                s.connect((HOST, PORT))
-                return
-            except OSError:
-                time.sleep(0.2)
-    log.warning("uvicorn が 10 秒以内に %s:%s に bind しませんでした", HOST, PORT)
+        if _responds_as_comfydir():
+            return
+        time.sleep(0.2)
+    log.warning("uvicorn が 10 秒以内に %s:%s で ComfyDir として応答しませんでした", HOST, PORT)
 
 
 def stop_server() -> None:
@@ -335,14 +344,8 @@ def _build_icon() -> pystray.Icon:
 
 # ---------------- main ----------------
 
-def _is_existing_instance_listening() -> bool:
-    """既存 ComfyDir が `HOST:PORT` で LISTEN 中なら True。
-
-    `connect` で接続できる = 既にどこかのプロセスが bind 済み。
-    多重起動を防ぐためのシングルトンチェックに使う。
-    過去に起動済み launcher.py が「uvicorn の bind 失敗を黙殺して tray だけ
-    生き残る」累積 (2026-05-21 確認: 14 プロセス残存) を構造的に塞ぐ目的。
-    """
+def _port_open() -> bool:
+    """HOST:PORT に誰かが LISTEN しているか (本人かは問わない)。"""
     with socket.socket() as s:
         s.settimeout(0.3)
         try:
@@ -350,6 +353,60 @@ def _is_existing_instance_listening() -> bool:
             return True
         except OSError:
             return False
+
+
+def _responds_as_comfydir() -> bool:
+    """HOST:PORT が ComfyDir 本人として応答するか (GET /manifest.json に "comfydir")。"""
+    if not _port_open():
+        return False
+    try:
+        conn = http.client.HTTPConnection(HOST, PORT, timeout=1.0)
+        try:
+            conn.request("GET", "/manifest.json")
+            resp = conn.getresponse()
+            ok = resp.status == 200
+            body = resp.read(4096).decode("utf-8", errors="replace") if ok else ""
+        finally:
+            conn.close()
+    except (OSError, http.client.HTTPException):
+        return False
+    return ok and "comfydir" in body.lower()
+
+
+def _is_existing_comfydir_listening() -> bool:
+    """既存 ComfyDir 本体が `HOST:PORT` で LISTEN 中なら True。
+
+    `connect` できるだけでは不十分: 別アプリ (例 CCA-StudyApp も以前は既定 8770)
+    が同じポートを先に奪っていると「既存 ComfyDir あり」と誤判定し、ブラウザを
+    別アプリに誘導してしまう。そこで本人マーカー "comfydir" の応答を確認する。
+
+    多重起動防止 (過去に tray だけ残る累積, 2026-05-21 確認 14 プロセス) も、
+    本物の ComfyDir なら manifest が一致するので従来どおり機能する。
+    """
+    return _responds_as_comfydir()
+
+
+def _port_held_by_foreign() -> bool:
+    """ポートは開いているが ComfyDir 本人ではない = 別アプリが先取りしている。"""
+    return _port_open() and not _responds_as_comfydir()
+
+
+def _notify_port_conflict() -> None:
+    """ポートが別アプリに奪われている旨を MessageBox で通知する (pythonw 対策)。"""
+    msg = (
+        f"ComfyDir はポート {PORT} を使う設定ですが、\n"
+        f"別のアプリが既にこのポートを使用しています。\n\n"
+        f"ComfyDir は誤って相手アプリの画面 (例: ログイン要求) を\n"
+        f"開かないよう、起動を中止しました。\n\n"
+        f"対処:\n"
+        f"  ・相手アプリを終了してから ComfyDir を起動し直す\n"
+        f"  ・または ports.json で 'comfydir' のポートを別番号に変える\n"
+        f"    ({registry_path()})"
+    )
+    try:
+        _user32.MessageBoxW(None, msg, "ComfyDir: ポート競合のため起動中止", MB_ICONWARNING)
+    except Exception as e:  # noqa: BLE001 — 通知失敗は致命的でない
+        log.warning("ポート競合の通知 (MessageBox) に失敗: %s", e)
 
 
 def main() -> int:
@@ -366,13 +423,23 @@ def main() -> int:
     # 既存ウィンドウを前面化 (or 新ウィンドウ作成) して自分は即終了する。
     # start.vbs を二重ダブルクリックしても pythonw / uvicorn / tray が
     # 累積しないようにするための入口ガード。
-    if _is_existing_instance_listening():
+    if _is_existing_comfydir_listening():
         log.info("既存の ComfyDir を %s で検出 → 既存に処理を委譲して終了", URL)
         try:
             open_or_focus_window()
         except Exception as e:
             log.warning("既存ウィンドウの前面化に失敗 (継続して終了): %s", e)
         return 0
+
+    # ポートが別アプリに奪われている場合は、自分の uvicorn を起動しても bind に
+    # 失敗し、かつブラウザを相手アプリに誘導して誤った画面 (例: CCA の Basic 認証
+    # ダイアログ) を見せてしまう。ここで明示的に中止し、ユーザーに通知する。
+    # 通常は port_registry でアプリごとに一意なポートを割り当てるので、この分岐は
+    # 環境変数の上書き衝突や第3のアプリが居る異常時の安全網。
+    if _port_held_by_foreign():
+        log.error("ポート %s:%s が ComfyDir 以外のアプリに使用されています → 起動中止", HOST, PORT)
+        _notify_port_conflict()
+        return 3
 
     start_server_thread()
 

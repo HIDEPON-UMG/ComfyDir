@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from comfy_image_organizer.port_registry import resolve_port
+
 # プロジェクトルート (= run.py のあるディレクトリ)
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
@@ -25,8 +27,15 @@ DANBOORU_TAG_DIR = DATA_DIR / "danbooru_tags"
 DANBOORU_TRANSLATION_DIR = DATA_DIR / "danbooru_translations"
 
 # サーバ設定
+# PORT 履歴: 8765 → 8770 (2026-06-01) → 8772 (2026-06-02)。
+#   8765→8770: notebooklm-mcp も既定 8765 を使うため衝突回避。
+#   8770→8772: CCA-StudyApp PWA も既定 8770 で、ComfyDir の画面に CCA の
+#              Basic 認証ダイアログが出る事故が発生。共有レジストリ
+#              (port_registry) でアプリごとに一意なポートを割り当て、
+#              ComfyDir は 'comfydir' キー = 8772 に分離した。
+# 解決順位は 環境変数 CIO_PORT > レジストリ ports.json の 'comfydir' > 既定 8772。
 HOST = os.environ.get("CIO_HOST", "127.0.0.1")
-PORT = int(os.environ.get("CIO_PORT", "8765"))
+PORT = resolve_port("comfydir", env_var="CIO_PORT", default=8772)
 
 # サムネ離散段 (px) ─ 旧 (128,192,256,384,512) を 1.5 倍化して画質向上。
 # 192 のみ旧値と重複するが生成パラメータ (quality=82, method=4) が同一なので

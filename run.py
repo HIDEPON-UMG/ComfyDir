@@ -3,7 +3,8 @@
 使い方:
     python run.py
 
-ブラウザで http://127.0.0.1:8765 を開く。
+既定ではブラウザで http://127.0.0.1:8772 を開く（ポートは config.PORT =
+共有レジストリ port_registry 由来。環境変数 CIO_PORT で上書き可）。
 """
 from __future__ import annotations
 
