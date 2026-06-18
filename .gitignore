@@ -31,3 +31,107 @@ Thumbs.db
 
 # CodeGraph ローカル index (tree-sitter SQLite, ローカル生成物)
 /.codegraph/
+# Project-specific
+artifacts/
+coverage/
+*.tar.gz
+*.tgz
+# External references
+_ref/
+.codegraph/
+# Local operations state
+_ops/
+# Environment
+.env
+.env.*
+!.env.example
+# OS metadata
+
+# BEGIN: claude-runtime-temp (managed by repo-harness)
+.claude/settings.local.json
+.claude/.atomic_pending
+.claude/.session-id
+.claude/.trace.jsonl
+.claude/.session-handoff.md
+.claude/.task-state.json
+.claude/.task-handoff.md
+.claude/.codegraph-state/
+.claude/*.tmp
+.claude/*.bak
+.claude/*.bak.*
+.claude/*.backup-*
+tasks/.current.md.tmp.*
+.ai/harness/checks/latest.json
+.ai/harness/checks/post-bash-latest.json
+.ai/harness/events.jsonl
+.ai/harness/archive/
+.ai/harness/failures/latest.jsonl
+.ai/harness/handoff/current.md
+.ai/harness/handoff/resume.md
+.ai/harness/capability-context/
+.ai/harness/security/*
+!.ai/harness/security/.gitkeep
+.ai/harness/planning/*
+!.ai/harness/planning/.gitkeep
+.ai/harness/architecture/events.jsonl
+.ai/harness/active-plan
+.ai/harness/active-worktree
+.ai/harness/sprint/
+.ai/harness/worktrees/
+.ai/harness/runs/
+.ai/harness/triage/*
+!.ai/harness/triage/.gitkeep
+.codex/*
+.claude/.active-plan
+.claude/.plan-state/
+# repo-harness generated helper wrappers
+scripts/new-spec.sh
+scripts/new-sprint.sh
+scripts/new-plan.sh
+scripts/capture-plan.sh
+scripts/plan-to-todo.sh
+scripts/contract-run.ts
+scripts/contract-worktree.sh
+scripts/ship-worktrees.sh
+scripts/archive-workflow.sh
+scripts/refresh-current-status.sh
+scripts/prepare-handoff.sh
+scripts/verify-contract.sh
+scripts/summarize-failures.sh
+scripts/verify-sprint.sh
+scripts/harness-trace-grade.sh
+scripts/sprint-backlog.sh
+scripts/check-task-sync.sh
+scripts/check-deploy-sql-order.sh
+scripts/check-architecture-sync.sh
+scripts/check-agent-tooling.sh
+scripts/check-context-files.sh
+scripts/check-brain-manifest.sh
+scripts/sync-brain-docs.sh
+scripts/check-skill-version.ts
+scripts/select-agent-context-blocks.sh
+scripts/ensure-task-workflow.sh
+scripts/check-task-workflow.sh
+scripts/maintenance-triage.sh
+scripts/heartbeat-triage.sh
+scripts/switch-plan.sh
+scripts/workflow-contract.ts
+scripts/inspect-project-state.ts
+scripts/migrate-workflow-docs.ts
+scripts/migrate-project-template.sh
+scripts/capability-resolver.ts
+scripts/architecture-event.ts
+scripts/capability-config.ts
+scripts/architecture-queue.sh
+scripts/archive-architecture-request.sh
+scripts/context-contract-sync.sh
+scripts/workstream-sync.sh
+scripts/prepare-codex-handoff.sh
+scripts/codex-handoff-resume.sh
+scripts/repo-harness/
+# END: claude-runtime-temp
+.repo-harness/mcp.local.json
+.repo-harness/mcp.tokens.json
+.repo-harness/mcp.oauth.json
+.repo-harness/mcp.oauth-tokens.json
+.ai/harness/mcp/audit.log

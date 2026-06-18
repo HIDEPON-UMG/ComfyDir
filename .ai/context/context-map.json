@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "profile": "stable-root-progressive-subdir",
+  "functional_block_selector": {
+      "script": "scripts/select-agent-context-blocks.sh",
+    "config_file": ".ai/context/agent-context-blocks.txt",
+    "env": "REPO_HARNESS_CONTEXT_BLOCKS",
+    "rule": "compatibility selector; capability registry is the source of truth"
+  },
+  "lsp_profiles": {
+    "default": "typescript-lsp",
+    "selection": "functional-block-first"
+  },
+  "root_context_files": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "docs/spec.md",
+    "tasks/current.md",
+    "tasks/todos.md",
+    "tasks/lessons.md",
+    ".ai/context/capabilities.json",
+    ".ai/harness/policy.json"
+  ],
+  "discoverable_contexts": [
+    {
+      "path": "docs/reference-configs/*.md",
+      "priority": "low",
+      "char_budget": 900,
+      "purpose": "deep-doc"
+    },
+    {
+      "path": "tasks/workstreams/**/*.md",
+      "priority": "high",
+      "char_budget": 1200,
+      "purpose": "capability-workstream"
+    }
+  ],
+  "budgets": {
+    "root_total_chars": 12000,
+    "per_discoverable_file_chars": 1200
+  }
+}

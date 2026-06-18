@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "project": "ComfyImageOrganizer",
+  "mode": "repo-contract-external-knowledge",
+  "default_brain_path": "brain/<project>/*",
+  "rules": [
+    "repo-local contracts, hooks, scripts, checks, and evidence remain authoritative",
+    "default brain stores long-lived explanations, runbooks, decisions, references, and patterns",
+    "hook runtime may sync explicitly opted-in repo-to-brain entries only; it must not query gbrain, MCP, or unregistered default brain paths"
+  ],
+  "entries": []
+}
