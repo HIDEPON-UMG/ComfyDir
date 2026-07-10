@@ -1293,12 +1293,32 @@ pre.prompt-negative {
 .statusbar__dot {
   width: 6px; height: 6px;
   border-radius: 50%;
+  background: var(--color-warning);
+  box-shadow: 0 0 6px var(--color-warning);
+}
+.statusbar__dot[data-state="online"] {
   background: var(--color-success);
   box-shadow: 0 0 6px var(--color-success);
+}
+.statusbar__dot[data-state="offline"] {
+  background: var(--color-error);
+  box-shadow: 0 0 6px var(--color-error);
+}
+.statusbar__watchdog,
+.statusbar__sse {
+  color: var(--color-fg-secondary);
 }
 .statusbar__msg { color: var(--color-fg-secondary); }
 .statusbar__msg strong { color: var(--color-fg-primary); font-weight: var(--font-weight-medium); }
 .statusbar__spacer { flex: 1; }
+.statusbar__relaunch {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+#sseStatus { color: var(--color-warning); }
+#sseStatus[data-state="connected"] { color: var(--color-success); }
+#sseStatus[data-state="disconnected"] { color: var(--color-error); }
 
 /* ============================== Prompt suggest ========================= */
 .prompt-search-wrap { position: relative; flex: 1 1 auto; min-width: 0; }

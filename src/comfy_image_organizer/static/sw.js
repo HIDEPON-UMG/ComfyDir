@@ -3,13 +3,13 @@
 // 役割:
 //   1) 静的アセット (HTML / CSS / JS / icon) を precache
 //   2) サムネと /api/prompt-category-map は CacheFirst (起動時 1 回しか変わらない)
-//   3) その他 /api/* は NetworkFirst (失敗時 cache fallback)
+//   3) その他 /api/* は NetworkOnly (失敗時に stale な UI 状態を返さない)
 //   4) ナビゲーション (req.mode === "navigate") は NetworkFirst → 失敗時 /offline.html
 //
 // VERSION を変更すると、activate 時に古い comfydir-* cache が自動で消える。
 // app.js / style.css / index.html / manifest.json を改修したら必ずインクリメントすること。
 
-const VERSION = "v21";
+const VERSION = "v22";
 const PRECACHE = `comfydir-precache-${VERSION}`;
 const RUNTIME  = `comfydir-runtime-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
@@ -61,9 +61,12 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(cacheFirst(req, RUNTIME));
     return;
   }
-  // 3) /api/* は NetworkFirst (失敗時 cache、なければそのまま失敗)
+  // 3) /api/* は NetworkOnly。
+  // stale な /api/folders などを返すと、バックエンド未起動なのに
+  // 「watchdog 監視中」に見える画面が残り、書込系 POST だけ Failed to fetch
+  // になる。動的 API は落ちているなら落ちていると UI に伝える。
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(networkFirst(req, RUNTIME));
+    event.respondWith(networkOnly(req));
     return;
   }
   // 4) ナビゲーション (HTML) は NetworkFirst → 失敗時 offline.html
@@ -107,4 +110,8 @@ async function networkFirst(req, cacheName) {
     if (cached) return cached;
     throw e;
   }
+}
+
+async function networkOnly(req) {
+  return fetch(req);
 }

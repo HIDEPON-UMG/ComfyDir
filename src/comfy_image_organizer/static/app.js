@@ -175,6 +175,39 @@ if ("serviceWorker" in navigator) {
   const $ = (sel) => document.querySelector(sel);
   const setStatus = (msg) => { $("#statusBar").textContent = msg || ""; };
 
+  function setSseStatus(status) {
+    const el = $("#sseStatus");
+    if (!el) return;
+    el.textContent = status;
+    el.dataset.state = status;
+  }
+
+  function setWatchdogStatus(state, text, title) {
+    const dot = $("#watchdogDot");
+    const label = $("#watchdogStatus");
+    if (dot) {
+      dot.dataset.state = state;
+      dot.title = title || text;
+    }
+    if (label) label.textContent = text;
+  }
+
+  function showRelaunchLink(show) {
+    const link = $("#relaunchLink");
+    if (link) link.hidden = !show;
+  }
+
+  function markBackendOnline() {
+    setWatchdogStatus("online", "watchdog 監視中", "watchdog 監視中");
+    showRelaunchLink(false);
+  }
+
+  function markBackendOffline(reason) {
+    setWatchdogStatus("offline", "ComfyDir 未接続", reason || "ComfyDir 本体に接続できません");
+    setSseStatus("disconnected");
+    showRelaunchLink(true);
+  }
+
   // ComfyUI Desktop (Electron) への D&D は OS 経由になり、ブラウザ内 JS で
   // dataTransfer.items.add(file) しても OS ペイロードには載らない。
   // 一方、新タブで画像を開いてドラッグすると Chromium が <img> の表示画像を
@@ -183,10 +216,17 @@ if ("serviceWorker" in navigator) {
   // サムネ <img> を hover で元 PNG (preview URL) にロード切替する方式を採用。
 
   async function api(path, opts = {}) {
-    const res = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
-      ...opts,
-    });
+    let res;
+    try {
+      res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...opts,
+      });
+    } catch (e) {
+      markBackendOffline(e?.message ?? String(e));
+      throw new Error("ComfyDir 本体に接続できません。タスクトレイまたは下の起動リンクから起動してください。");
+    }
+    markBackendOnline();
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`${res.status} ${res.statusText}: ${text}`);
@@ -1782,7 +1822,12 @@ if ("serviceWorker" in navigator) {
 
   // ---------------- SSE ----------------
   function startEventStream() {
+    setSseStatus("connecting");
     const es = new EventSource("/api/events");
+    es.addEventListener("ready", () => {
+      markBackendOnline();
+      setSseStatus("connected");
+    });
     es.addEventListener("image_added", (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -1845,7 +1890,9 @@ if ("serviceWorker" in navigator) {
       // 安全 (操作起点となるのは「現在のフォルダ」のみのため)。
       setRescanIndicator(false);
     });
-    es.onerror = () => {};
+    es.onerror = () => {
+      markBackendOffline("SSE 接続が切断されました");
+    };
   }
 
   // ---------------- ユーティリティ ----------------

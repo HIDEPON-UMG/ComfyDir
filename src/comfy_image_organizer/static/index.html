@@ -263,11 +263,12 @@
 
     <!-- ============================== STATUS BAR ============================== -->
     <footer class="statusbar">
-      <span class="statusbar__dot" title="watchdog 監視中"></span>
-      <span style="color: var(--color-fg-secondary)">watchdog 監視中</span>
+      <span id="watchdogDot" class="statusbar__dot statusbar__dot--pending" title="接続確認中"></span>
+      <span id="watchdogStatus" class="statusbar__watchdog">接続確認中</span>
       <span id="statusBar" class="statusbar__msg"></span>
+      <a id="relaunchLink" class="statusbar__relaunch" href="comfydir://launch" hidden>ComfyDir を起動</a>
       <span class="statusbar__spacer"></span>
-      <span style="color: var(--color-fg-secondary)">SSE: <span id="sseStatus" style="color: var(--color-success)">connected</span></span>
+      <span class="statusbar__sse">SSE: <span id="sseStatus">connecting</span></span>
     </footer>
   </div>
 
