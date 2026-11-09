@@ -32,7 +32,7 @@ def test_app_marks_backend_offline_on_fetch_failure() -> None:
 def test_service_worker_does_not_cache_dynamic_api_fallbacks() -> None:
     sw = (STATIC / "sw.js").read_text(encoding="utf-8")
 
-    assert 'const VERSION = "v22";' in sw
+    assert 'const VERSION = "v24";' in sw
     assert "event.respondWith(networkOnly(req));" in sw
     assert "async function networkOnly(req)" in sw
     assert "event.respondWith(networkFirst(req, RUNTIME));" not in sw

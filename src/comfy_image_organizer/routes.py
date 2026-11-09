@@ -335,18 +335,34 @@ def delete_folder(folder_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
 
 
 @router.post("/api/folders/{folder_id}/rescan")
-def rescan_folder(folder_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
+def rescan_folder(
+    folder_id: int,
+    full: bool = False,
+    conn=Depends(get_conn),
+) -> dict[str, Any]:
+    """再スキャン。full=1 なら、変更の有無にかかわらず全件を読み直す (Shift+クリック)。"""
     f = repo.get_folder(conn, folder_id)
     if f is None:
         raise HTTPException(status_code=404, detail="フォルダが見つかりません")
     rec = bool(f["recursive"])
 
     def _task() -> None:
-        scanner.full_scan(folder_id, f["path"], recursive=rec)
+        scanner.full_scan(folder_id, f["path"], recursive=rec, full=full)
         # まだ Observer が起動していなければ開始
         scanner.manager.start_folder(folder_id, f["path"], recursive=rec)
+        # 仮の行の解析 (新しい順の背景処理) を始める。動いていれば何もしない。
+        scanner.manager.kick_enrichment()
     threading.Thread(target=_task, daemon=True).start()
     return {"started": True}
+
+
+@router.post("/api/refresh")
+def refresh_images() -> dict[str, Any]:
+    """新着の確認 (全フォルダ・数秒) を背景で起動する。画面が開いたとき・30 秒ごと・前面復帰のときに呼ぶ。
+
+    すでに確認が動いている、または起動時の走査の最中なら、起動せず started=false を返す。
+    """
+    return {"started": scanner.manager.refresh_async()}
 
 
 # ---------- images ----------
@@ -410,6 +426,13 @@ def get_image_detail(image_id: int, conn=Depends(get_conn)) -> dict[str, Any]:
     r = repo.get_image(conn, image_id)
     if r is None:
         raise HTTPException(status_code=404, detail="画像が見つかりません")
+    if str(r["sha1"] or "").startswith(repo.PENDING_PREFIX):
+        # 仮の行 (背景の解析がまだ) は、開かれた時点でその場で解析する。
+        # 改名検出で行の id が変わることがあるので、戻り値の image_id で取り直す。
+        info = scanner.enrich_image(image_id)
+        if info is not None:
+            r = repo.get_image(conn, int(info["image_id"])) or r
+            image_id = int(r["id"])
     tags = repo.list_tags_for_image(conn, image_id)
     # memo 列はマイグレーション直後など、Row に含まれないケースに備えて安全に取得
     memo = r["memo"] if "memo" in r.keys() else None

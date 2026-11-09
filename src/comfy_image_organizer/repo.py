@@ -6,6 +6,7 @@ sqlite3.Row を返すので呼び出し側は dict ライクに扱える。
 from __future__ import annotations
 
 import csv
+import hashlib
 import logging
 import re
 import sqlite3
@@ -240,6 +241,98 @@ def list_image_paths_in_folder(
         "SELECT path FROM images WHERE folder_id = ?", (folder_id,)
     ).fetchall()
     return [r["path"] for r in rows]
+
+
+def list_image_stat_by_path(conn: sqlite3.Connection) -> dict[str, tuple[Any, Any]]:
+    """全フォルダの登録を 1 回の SELECT で読み、パス → (サイズ, 更新日時) の辞書にする。
+
+    差分走査 (scanner.full_scan) が、持ち主のフォルダを問わず変更の有無を判定するために使う。
+    """
+    rows = conn.execute("SELECT path, size, mtime FROM images").fetchall()
+    return {r["path"]: (r["size"], r["mtime"]) for r in rows}
+
+
+# 仮登録 (ファイル名・サイズ・更新日時だけの行)。ハッシュと解析は背景で後から済ませる。
+# 仮の sha1 は "pending-" + 40 桁の 16 進。実の sha1 は 16 進だけなので、範囲検索
+# (sha1 >= 'pending-' AND sha1 < 'pending.') で仮の行だけを idx_images_sha1 で引ける。
+PENDING_PREFIX = "pending-"
+
+
+def stub_sha1(path: str, size: int, mtime: float) -> str:
+    """仮の sha1。パスを含めるので行ごとに一意 (同じ内容の別ファイルを改名検出が統合しない)。"""
+    key = f"{path}|{size}|{mtime!r}".encode("utf-8")
+    return PENDING_PREFIX + hashlib.sha1(key).hexdigest()
+
+
+def insert_stub_images(
+    conn: sqlite3.Connection, rows: Iterable[tuple[int, str, int, float]]
+) -> int:
+    """(folder_id, path, size, mtime) の列を、1 回の取引で仮の行として入れる。
+
+    同じ path が既にあれば、sha1・サイズ・更新日時だけを仮の値に更新する
+    (幅・高さ・プロンプトは残す。背景の解析が済むまで、前の値で表示と検索ができる)。
+    1 行でも失敗したら全体を ROLLBACK する。
+    """
+    now = time.time()
+    params = [
+        (
+            int(folder_id), path, Path(path).name, stub_sha1(path, size, mtime),
+            size, mtime, now, now,
+        )
+        for folder_id, path, size, mtime in rows
+    ]
+    if not params:
+        return 0
+    conn.execute("BEGIN")
+    try:
+        conn.executemany(
+            """
+            INSERT INTO images (
+              folder_id, path, filename, sha1, size, mtime,
+              width, height, positive_prompt, negative_prompt, raw_prompt_json,
+              sort_order, added_at, scanned_at
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+              folder_id  = excluded.folder_id,
+              filename   = excluded.filename,
+              sha1       = excluded.sha1,
+              size       = excluded.size,
+              mtime      = excluded.mtime,
+              scanned_at = excluded.scanned_at
+            """,
+            params,
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return len(params)
+
+
+def list_pending_images(
+    conn: sqlite3.Connection, limit: int, exclude_ids: Iterable[int] = ()
+) -> list[sqlite3.Row]:
+    """仮の行を、更新日時の新しい順に最大 limit 件返す (背景の解析の順)。"""
+    ids = [int(i) for i in exclude_ids]
+    sql = (
+        "SELECT id, folder_id, path, sha1 FROM images "
+        "WHERE sha1 >= 'pending-' AND sha1 < 'pending.'"
+    )
+    args: list[Any] = []
+    if ids:
+        sql += " AND id NOT IN (" + ",".join("?" * len(ids)) + ")"
+        args.extend(ids)
+    sql += " ORDER BY mtime DESC, id DESC LIMIT ?"
+    args.append(int(limit))
+    return conn.execute(sql, args).fetchall()
+
+
+def count_images_in_folder(conn: sqlite3.Connection, folder_id: int) -> int:
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM images WHERE folder_id = ?", (folder_id,)
+        ).fetchone()[0]
+    )
 
 
 def search_images(

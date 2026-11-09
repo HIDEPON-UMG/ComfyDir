@@ -101,6 +101,7 @@ if ("serviceWorker" in navigator) {
       favoritesView: state.favoritesView,
       favoritesCategoryFilter: state.favoritesCategoryFilter,
       favoritesQuery: state.favoritesQuery,
+      orderMigrated: 1,
     };
     try {
       localStorage.setItem(PREF_KEY, JSON.stringify(p));
@@ -108,6 +109,15 @@ if ("serviceWorker" in navigator) {
   }
 
   const prefs = loadPrefs();
+  // 既定の並びを「更新日時の新しい順」に変えたので、保存済みの「名前 ↑」は 1 回だけ移す。
+  // 移した後 (orderMigrated: 1) の利用者の選択は、そのまま尊重する。
+  if (prefs.orderMigrated !== 1) {
+    if (prefs.order === "name" && prefs.direction === "asc") {
+      prefs.order = "mtime";
+      prefs.direction = "desc";
+    }
+    prefs.orderMigrated = 1;
+  }
 
   // ---------------- 状態 ----------------
   const state = {
@@ -120,8 +130,8 @@ if ("serviceWorker" in navigator) {
     tags: [],
     filterTags: Array.isArray(prefs.filterTags) ? prefs.filterTags : [],
     filterMode: prefs.filterMode || "and",
-    order: prefs.order || "name",
-    direction: prefs.direction || "asc",
+    order: prefs.order || "mtime",
+    direction: prefs.direction || "desc",
     thumbW: prefs.thumbW || 200,
     rightPaneWidth: prefs.rightPaneWidth || 360,
     promptQuery: prefs.promptQuery || "",
@@ -456,7 +466,7 @@ if ("serviceWorker" in navigator) {
       btn.classList.toggle("is-rescanning", !!on);
       btn.disabled = !!on;
       btn.setAttribute("aria-busy", on ? "true" : "false");
-      btn.title = on ? "再スキャン中..." : "再スキャン";
+      btn.title = on ? "新着を確認中..." : "新着の確認（Shift+クリックで全件を読み直す）";
     }
     const bar = $("#rescanProgress");
     if (bar) {
@@ -505,15 +515,19 @@ if ("serviceWorker" in navigator) {
     }
   }
 
-  async function rescanCurrentFolder() {
+  // Shift+クリックなら、変更の有無にかかわらず全件を読み直す (`full=1`)。
+  // 通常のクリックは、サイズと更新日時が同じファイルを読み飛ばす差分走査。
+  async function rescanCurrentFolder(ev) {
     if (state.currentFolderId == null) return;
-    setStatus("再スキャン中...");
+    const full = !!(ev && ev.shiftKey);
+    setStatus(full ? "全件を読み直し中..." : "新着を確認中...");
     setRescanIndicator(true);
     // サーバはバックグラウンドで full_scan を回し、完了時に SSE `folder_rescanned`
     // を emit する。受信側で reloadImages() + reloadFolders() を実行するため、
     // ここでは追加の reload は不要 (固定 setTimeout に頼らないようにする)。
     try {
-      await api(`/api/folders/${state.currentFolderId}/rescan`, { method: "POST" });
+      const qs = full ? "?full=1" : "";
+      await api(`/api/folders/${state.currentFolderId}/rescan${qs}`, { method: "POST" });
     } catch (e) {
       // 開始リクエスト自体が失敗した場合は SSE が来ないので、ここでだけ戻す。
       setRescanIndicator(false);
@@ -546,9 +560,37 @@ if ("serviceWorker" in navigator) {
     renderRightPane();
   }
 
+  // ---- 一覧の描画の状態 (タイルの使い回しと分割描画) ----
+  // 画像の ID → { key, el }。取り直し・選択の変更のたびに約 1 万枚のタイルを
+  // 作り直さないよう、作ったタイルを使い回す。
+  const tileCache = new Map();
+  let tileCacheKey = "";      // 縮小画像の幅 (reqW) の文字列。変わったらタイルを作り直す
+  let appliedSel = new Set(); // is-selected を付けてあるタイルの画像 ID
+  let renderGen = 0;          // 描画の世代。途中で次の描画が来たら、古い追加を止める
+  let lastViewKey = "";       // 直近の表示 (フォルダ・フィルタ・検索語)
+  let pendingKeep = null;     // 分割描画の途中でまだ復元できていないスクロール位置
+  const GRID_BATCH = 400;     // 1 回に新しく作るタイルの数
+
+  // 表示の鍵。reloadImages が /api/images へ渡す問い合わせのうち、並び順以外と同じ要素。
+  // 同じ鍵の取り直し (新着・並び順の変更) はスクロール位置を保ち、変わったら先頭に戻す。
+  function currentViewKey() {
+    return [
+      state.currentFolderId,
+      state.filterMode,
+      state.filterTags.join(","),
+      state.promptQuery,
+      state.memoQuery,
+    ].join("\u0001");
+  }
+
+  // タイルの使い回しの鍵。上書き保存 (sha1) や改名 (filename) で、縮小画像の版・
+  // キャプション・プレビューの URL が古いまま残らないよう、ID に加えて含める。
+  function tileKeyOf(img) {
+    return `${img.id}:${img.sha1}:${img.filename}`;
+  }
+
   function renderGrid() {
     const g = $("#grid");
-    g.innerHTML = "";
     const w = state.thumbW;
     // HiDPI ディスプレイ (Retina / Windows 拡大率 150%+) では物理 px を上げて
     // クッキリ描画。離散段は 192/288/384/576/768 で頭打ちになるので 2 倍まで。
@@ -556,73 +598,181 @@ if ("serviceWorker" in navigator) {
     const reqW = snapThumbW(Math.round(w * dpr));
     g.style.setProperty("--thumb-size", `${w}px`);
 
-    for (const img of state.images) {
-      const tile = document.createElement("article");
-      tile.className = "tile" + (state.selected.has(img.id) ? " is-selected" : "");
-      tile.dataset.id = img.id;
-
-      const thumb = document.createElement("div");
-      thumb.className = "tile__thumb";
-      // 各タイルを画像の自然アスペクト比に合わせる (1:1 固定をやめて、
-      // 横長画像の上下レターボックスをなくす)。極端比は念のため [0.4, 2.5] にクランプ。
-      if (img.width > 0 && img.height > 0) {
-        const a = img.width / img.height;
-        const clamped = Math.max(0.4, Math.min(2.5, a));
-        thumb.style.setProperty("--img-aspect", String(clamped));
+    // 縮小画像の幅の段が変わったら、タイルを全部作り直す
+    if (String(reqW) !== tileCacheKey) {
+      tileCache.clear();
+      appliedSel.clear();
+      tileCacheKey = String(reqW);
+    }
+    // 取り直しで消えた画像と、版 (sha1)・ファイル名が変わった画像のタイルを外す
+    const keyById = new Map();
+    for (const img of state.images) keyById.set(img.id, tileKeyOf(img));
+    for (const [id, ent] of tileCache) {
+      if (keyById.get(id) !== ent.key) {
+        tileCache.delete(id);
+        appliedSel.delete(id);
       }
-
-      const i = document.createElement("img");
-      i.loading = "lazy";
-      const thumbUrl = `/api/images/${img.id}/thumb?w=${reqW}&v=${img.sha1.slice(0, 8)}`;
-      const previewUrl = `/api/images/${img.id}/preview?v=${img.sha1.slice(0, 8)}`;
-      i.src = thumbUrl;
-      i.alt = img.filename;
-      // ComfyUI Desktop への D&D 対応: <img> を draggable にしておき、
-      // hover で src を preview URL (元 PNG / workflow メタデータ込み) に
-      // 切り替える。Chromium が表示画像をローカルファイル化して OS に渡すので、
-      // Electron 側 ComfyUI が File として受け取り workflow を復元できる。
-      // CSS は object-fit: cover 固定なのでアスペクト比が同じ preview と
-      // 入れ替わってもレイアウトは崩れない。Cache-Control で再 fetch も抑止。
-      i.draggable = true;
-      i.dataset.thumbSrc = thumbUrl;
-      i.dataset.previewSrc = previewUrl;
-      thumb.appendChild(i);
-
-      // 選択チェックマーク (hover or 選択中に表示)
-      const check = document.createElement("span");
-      check.className = "tile__check";
-      check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
-      thumb.appendChild(check);
-
-      // hover で重ねるキャプション (画面下のグラデーション帯に乗る)
-      const cap = document.createElement("span");
-      cap.className = "tile__caption";
-      cap.textContent = img.filename;
-      thumb.appendChild(cap);
-
-      tile.appendChild(thumb);
-      // ファイル名はサムネ内オーバーレイ (.tile__caption) のみ表示。
-      // 下部の独立した枠は冗長なので外している。
-
-      tile.addEventListener("click", (ev) => onCellClick(ev, img.id));
-
-      // ComfyUI Desktop への D&D 経路: hover で <img>.src を preview URL に
-      // 切り替え、Chromium が元 PNG を OS ドラッグペイロードに乗せられる状態に。
-      // pointerleave で thumb URL に戻すとメモリ節約になるが、ドラッグ確定後の
-      // ホバー解除で src が thumb に戻ると OS が掴むファイルがブレるリスクが
-      // あるため戻さない。Cache-Control + ブラウザキャッシュで再表示時の負担は
-      // 軽い。pointerenter は once 指定で 1 度だけ実行。
-      tile.addEventListener("pointerenter", () => {
-        if (i.src !== previewUrl && i.dataset.previewSrc) {
-          i.src = i.dataset.previewSrc;
-        }
-      }, { once: true });
-
-      g.appendChild(tile);
     }
 
+    // 同じ表示の取り直しならスクロール位置を保ち、フォルダ・フィルタ・検索語を
+    // 替えたときは先頭に戻す。分割描画の途中で次の取り直しが来たときは、
+    // まだ復元できていない前の位置 (pendingKeep) を引き継ぐ。
+    const gen = ++renderGen;
+    const viewKey = currentViewKey();
+    const keep = viewKey === lastViewKey
+      ? (pendingKeep != null ? pendingKeep : g.scrollTop)
+      : 0;
+    lastViewKey = viewKey;
+
+    const imgs = state.images;
+    let idx = 0;
+    // 新しく作るタイルが GRID_BATCH 枚になるまで (使い回すタイルは数えない) まとめて返す
+    const takeBatch = () => {
+      const frag = document.createDocumentFragment();
+      let made = 0;
+      while (idx < imgs.length && made < GRID_BATCH) {
+        const img = imgs[idx++];
+        let ent = tileCache.get(img.id);
+        if (!ent) {
+          ent = { key: keyById.get(img.id), el: makeTile(img, reqW) };
+          tileCache.set(img.id, ent);
+          made++;
+        }
+        frag.appendChild(ent.el);
+      }
+      return frag;
+    };
+
+    // スクロール位置の復元は、復元できる高さになった最初の時点で 1 回だけ行う
+    // (復元の後は引き戻さない。追加の途中で利用者がスクロールしても邪魔をしない)。
+    let restored = false;
+    const tryRestore = () => {
+      if (restored) return;
+      if (g.scrollHeight - g.clientHeight >= keep) {
+        g.scrollTop = keep;
+        restored = true;
+        pendingKeep = null;
+      }
+    };
+
+    g.replaceChildren(takeBatch());
+    if (keep === 0) {
+      g.scrollTop = 0;
+      restored = true;
+      pendingKeep = null;
+    } else {
+      pendingKeep = keep;
+      tryRestore();
+    }
+
+    // 残りは次のフレームから続けて追加する (最初の画面を先に出す)
+    const step = () => {
+      if (gen !== renderGen) return;
+      g.appendChild(takeBatch());
+      tryRestore();
+      if (idx < imgs.length) requestAnimationFrame(step);
+    };
+    if (idx < imgs.length) requestAnimationFrame(step);
+
+    updateSelectionClasses();
     updateSummary();
     updateMoveButton();
+  }
+
+  // タイル 1 枚を組み立てる (選択中なら is-selected を付けて appliedSel に入れる)。
+  function makeTile(img, reqW) {
+    const tile = document.createElement("article");
+    const selected = state.selected.has(img.id);
+    tile.className = "tile" + (selected ? " is-selected" : "");
+    if (selected) appliedSel.add(img.id);
+    tile.dataset.id = img.id;
+
+    const thumb = document.createElement("div");
+    thumb.className = "tile__thumb";
+    // 各タイルを画像の自然アスペクト比に合わせる (1:1 固定をやめて、
+    // 横長画像の上下レターボックスをなくす)。極端比は念のため [0.4, 2.5] にクランプ。
+    if (img.width > 0 && img.height > 0) {
+      const a = img.width / img.height;
+      const clamped = Math.max(0.4, Math.min(2.5, a));
+      thumb.style.setProperty("--img-aspect", String(clamped));
+    }
+
+    const i = document.createElement("img");
+    i.loading = "lazy";
+    const thumbUrl = `/api/images/${img.id}/thumb?w=${reqW}&v=${img.sha1.slice(0, 8)}`;
+    const previewUrl = `/api/images/${img.id}/preview?v=${img.sha1.slice(0, 8)}`;
+    i.src = thumbUrl;
+    i.alt = img.filename;
+    // ComfyUI Desktop への D&D 対応: <img> を draggable にしておき、
+    // hover で src を preview URL (元 PNG / workflow メタデータ込み) に
+    // 切り替える。Chromium が表示画像をローカルファイル化して OS に渡すので、
+    // Electron 側 ComfyUI が File として受け取り workflow を復元できる。
+    // CSS は object-fit: cover 固定なのでアスペクト比が同じ preview と
+    // 入れ替わってもレイアウトは崩れない。Cache-Control で再 fetch も抑止。
+    i.draggable = true;
+    i.dataset.thumbSrc = thumbUrl;
+    i.dataset.previewSrc = previewUrl;
+    thumb.appendChild(i);
+
+    // 選択チェックマーク (hover or 選択中に表示)
+    const check = document.createElement("span");
+    check.className = "tile__check";
+    check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+    thumb.appendChild(check);
+
+    // hover で重ねるキャプション (画面下のグラデーション帯に乗る)
+    const cap = document.createElement("span");
+    cap.className = "tile__caption";
+    cap.textContent = img.filename;
+    thumb.appendChild(cap);
+
+    tile.appendChild(thumb);
+    // ファイル名はサムネ内オーバーレイ (.tile__caption) のみ表示。
+    // 下部の独立した枠は冗長なので外している。
+
+    tile.addEventListener("click", (ev) => onCellClick(ev, img.id));
+
+    // ComfyUI Desktop への D&D 経路: hover で <img>.src を preview URL に
+    // 切り替え、Chromium が元 PNG を OS ドラッグペイロードに乗せられる状態に。
+    // pointerleave で thumb URL に戻すとメモリ節約になるが、ドラッグ確定後の
+    // ホバー解除で src が thumb に戻ると OS が掴むファイルがブレるリスクが
+    // あるため戻さない。Cache-Control + ブラウザキャッシュで再表示時の負担は
+    // 軽い。pointerenter は once 指定で 1 度だけ実行。
+    tile.addEventListener("pointerenter", () => {
+      if (i.src !== previewUrl && i.dataset.previewSrc) {
+        i.src = i.dataset.previewSrc;
+      }
+    }, { once: true });
+
+    return tile;
+  }
+
+  // 選択の変更を、作ってあるタイルの is-selected の付け外しだけで反映する
+  // (全タイルを作り直さない)。まだ作られていないタイルは、作られるとき makeTile が付ける。
+  function updateSelectionClasses() {
+    for (const id of appliedSel) {
+      if (state.selected.has(id)) continue;
+      const ent = tileCache.get(id);
+      if (ent) ent.el.classList.toggle("is-selected", false);
+      appliedSel.delete(id);
+    }
+    for (const id of state.selected) {
+      if (appliedSel.has(id)) continue;
+      const ent = tileCache.get(id);
+      if (!ent) continue;
+      ent.el.classList.toggle("is-selected", true);
+      appliedSel.add(id);
+    }
+  }
+
+  // 新しい画像の通知が続いても、一覧の取り直しは 0.4 秒に 1 回にまとめる
+  let reloadTimer = null;
+  function scheduleReloadImages() {
+    if (reloadTimer) return;
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      reloadImages();
+    }, 400);
   }
 
   function updateSummary() {
@@ -666,7 +816,10 @@ if ("serviceWorker" in navigator) {
       state.lastClickedId = id;
     }
     refreshDetail();
-    renderGrid();
+    // 選択の枠の付け外しだけ。全タイルを作り直さない
+    updateSelectionClasses();
+    updateSummary();
+    updateMoveButton();
     renderRightPane();
   }
 
@@ -1216,6 +1369,9 @@ if ("serviceWorker" in navigator) {
 
     const renderTokens = () => {
       row.innerHTML = "";
+      // タグの間に区切り「, 」を文字として入れる (範囲選択コピーで「a, b, c」になる)。
+      // 「// ラベル」見出しの直後の最初のタグの前には入れない。
+      let needSep = false;
       if (!currentText.trim()) {
         const empty = document.createElement("span");
         empty.className = "prompt-empty";
@@ -1234,10 +1390,17 @@ if ("serviceWorker" in navigator) {
           lab.className = "prompt-token-section";
           lab.textContent = line.replace(/^\/\/\s*/, "");
           row.appendChild(lab);
+          needSep = false;
           continue;
         }
         const toks = line.split(",").map(t => t.trim()).filter(t => t.length);
         for (const t of toks) {
+          if (needSep) {
+            const sep = document.createElement("span");
+            sep.className = "prompt-sep";
+            sep.textContent = ", ";
+            row.appendChild(sep);
+          }
           const span = document.createElement("span");
           span.className = "prompt-token";
           span.textContent = t;
@@ -1245,6 +1408,7 @@ if ("serviceWorker" in navigator) {
           if (cat && cat !== "unknown") span.dataset.cat = cat;
           if (_isLoraToken(t)) span.dataset.cat = "lora";
           row.appendChild(span);
+          needSep = true;
         }
       }
     };
@@ -1815,9 +1979,37 @@ if ("serviceWorker" in navigator) {
       state.selected.clear();
       state.lastClickedId = null;
       refreshDetail();
-      renderGrid();
+      updateSelectionClasses();
+      updateSummary();
+      updateMoveButton();
       renderRightPane();
     });
+  }
+
+  // ---------------- 新着の自動確認 ----------------
+  // サーバーに新着の確認 (POST /api/refresh。数秒で終わり、新しいファイルは仮の行として
+  // 即一覧に出る) を頼む。見えている間だけ、前回から 10 秒以上空いたときだけ送る。
+  let lastRefreshAt = 0;
+  let autoRefreshStarted = false;
+
+  async function requestRefresh() {
+    if (document.visibilityState !== "visible") return;
+    const now = Date.now();
+    if (now - lastRefreshAt < 10000) return;
+    lastRefreshAt = now;
+    try {
+      await api("/api/refresh", { method: "POST" });
+    } catch {}
+  }
+
+  // 前面に戻ったとき・30 秒ごとに新着を確認する。二重に起動しない。
+  function startAutoRefresh() {
+    if (autoRefreshStarted) return;
+    autoRefreshStarted = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") requestRefresh();
+    });
+    setInterval(requestRefresh, 30000);
   }
 
   // ---------------- SSE ----------------
@@ -1827,12 +2019,15 @@ if ("serviceWorker" in navigator) {
     es.addEventListener("ready", () => {
       markBackendOnline();
       setSseStatus("connected");
+      // 開いた直後 (と再接続のたび) に新着を確認し、以後は 30 秒ごと・前面復帰のたびに確認する。
+      requestRefresh();
+      startAutoRefresh();
     });
     es.addEventListener("image_added", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.folder_id === state.currentFolderId) {
-          reloadImages();
+          scheduleReloadImages();
           reloadFolders();
         }
       } catch {}
@@ -1841,7 +2036,7 @@ if ("serviceWorker" in navigator) {
       try {
         const data = JSON.parse(e.data);
         if (data.folder_id === state.currentFolderId) {
-          reloadImages();
+          scheduleReloadImages();
           reloadFolders();
         }
       } catch {}
@@ -1873,12 +2068,17 @@ if ("serviceWorker" in navigator) {
       try {
         const data = JSON.parse(e.data);
         if (data.folder_id === state.currentFolderId) {
-          reloadImages();
+          scheduleReloadImages();
         }
         reloadFolders();
         const p = data.payload || {};
         const added = p.added_or_updated ?? 0;
         const removed = p.removed ?? 0;
+        if (p.auto) {
+          // 自動の新着の確認: 回転表示は出していないので止めず、静かな文だけ出す。
+          setStatus(`新着 ${added} 件を表示しました（解析は背景で続きます）`);
+          return;
+        }
         if (p.missing_folder) {
           setStatus("再スキャン: 対象フォルダが見つかりませんでした");
         } else {
@@ -1921,7 +2121,7 @@ if ("serviceWorker" in navigator) {
     $("#btnAddFolder").onclick = addFolder;
     $("#btnRemoveFolder").onclick = removeCurrentFolder;
     $("#btnEditFolder").onclick = editCurrentFolder;
-    $("#btnRescan").onclick = rescanCurrentFolder;
+    $("#btnRescan").onclick = (ev) => rescanCurrentFolder(ev);
     $("#btnMove").onclick = openMoveDialog;
 
     // お気に入りプロンプト: トップバーのトグル

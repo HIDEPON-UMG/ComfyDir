@@ -42,21 +42,10 @@ async def lifespan(app: FastAPI):
     scanner.manager.bind_loop(loop)
     scanner.manager.start_all()
 
-    # 起動時に各フォルダを 1 回フルスキャン (バックグラウンド)
-    def _initial_scan() -> None:
-        c = connect()
-        try:
-            from . import repo
-            for f in repo.list_folders(c):
-                try:
-                    scanner.full_scan(int(f["id"]), f["path"])
-                except Exception as e:
-                    log.warning("起動時スキャン失敗: folder_id=%s (%s)", f["id"], e)
-        finally:
-            c.close()
-
+    # 起動時に各フォルダを 1 回走査 (バックグラウンド)。変更のないファイルは読み飛ばし、
+    # 各フォルダの recursive (直下のみの設定) に従う。
     import threading
-    threading.Thread(target=_initial_scan, daemon=True).start()
+    threading.Thread(target=scanner.run_initial_scan, daemon=True).start()
 
     log.info("ComfyImageOrganizer ready")
     try:

@@ -1185,7 +1185,8 @@ pre.prompt-negative {
 .prompt-btn-bar button { height: 28px; padding: 0 var(--space-4); font-size: var(--font-size-xs); }
 
 .prompt-token-row {
-  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  /* 行内の並び。タグの間の「, 」(.prompt-sep) を文字として並べる */
+  display: block;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   padding: var(--space-4) var(--space-5);
@@ -1196,11 +1197,23 @@ pre.prompt-negative {
 }
 .prompt-token {
   position: relative;
+  /* チップを 1 つの塊にして、行の途中で割らない（折り返しは「, 」の後だけ）。
+     行より長いタグだけ、枠の中で折り返す。 */
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+  overflow-wrap: anywhere;
   padding: 0 6px;
   border-radius: 4px;
   background: oklch(0.30 0.02 260);
   color: var(--color-fg-primary);
   border-bottom: 2px solid transparent;
+}
+/* タグとタグの間の区切り「, 」。範囲選択してコピーしたとき「a, b, c」で貼り付けられるよう、
+   文字として表示する */
+.prompt-sep {
+  color: var(--color-fg-muted);
+  user-select: text;
 }
 /* Danbooru CSV ベースのカテゴリ */
 .prompt-token[data-cat="character"]   { border-color: var(--color-cat-1); }
