@@ -9,7 +9,7 @@
 // VERSION を変更すると、activate 時に古い comfydir-* cache が自動で消える。
 // app.js / style.css / index.html / manifest.json を改修したら必ずインクリメントすること。
 
-const VERSION = "v24";
+const VERSION = "v27";
 const PRECACHE = `comfydir-precache-${VERSION}`;
 const RUNTIME  = `comfydir-runtime-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
@@ -18,8 +18,9 @@ const PRECACHE_URLS = [
   "/",
   "/offline.html",
   "/manifest.json",
-  "/static/style.css",
-  "/static/app.js",
+  // index.html が読む URL と同じ（?v= は VERSION と同じ値にする。契約テストが照合する）
+  "/static/style.css?v=v27",
+  "/static/app.js?v=v27",
   "/static/favicon.svg",
   "/assets/icon-192.png",
   "/assets/icon-512.png",

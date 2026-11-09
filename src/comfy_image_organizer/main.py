@@ -81,7 +81,8 @@ app.include_router(router)
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # 古い index.html をブラウザのキャッシュから出さない（読む CSS/JS の版が古いままになるため）
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/favicon.ico", include_in_schema=False)

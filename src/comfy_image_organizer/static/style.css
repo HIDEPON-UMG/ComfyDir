@@ -71,6 +71,7 @@
   --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code",
                "Hiragino Kaku Gothic ProN", monospace;
 
+  --font-size-2xs:  10px;
   --font-size-xs:   11px;
   --font-size-sm:   12px;
   --font-size-md:   13px;
@@ -768,6 +769,15 @@ input[type="range"]::-moz-range-thumb {
      これで横長タイルが上下に伸びることなく、画像のまま描画される */
   align-items: start;
   scrollbar-gutter: stable;
+  /* 仮想スクロール: 上下の余白は spacer で表し、位置は JS が計算する。
+     ブラウザの自動のスクロール位置補正が、その計算とぶつからないようにする */
+  overflow-anchor: none;
+}
+
+/* 仮想スクロールの上下の余白。全列にまたがる 1 行で、高さは JS が決める */
+.grid-spacer {
+  grid-column: 1 / -1;
+  pointer-events: none;
 }
 
 .tile {
@@ -1188,7 +1198,8 @@ pre.prompt-negative {
   /* 行内の並び。タグの間の「, 」(.prompt-sep) を文字として並べる */
   display: block;
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  /* 右ペインの幅に収まるよう、既存の最小の段 (xs=11px) のさらに下 (10px) */
+  font-size: var(--font-size-2xs);
   padding: var(--space-4) var(--space-5);
   background: var(--color-bg-inset);
   border: 1px solid var(--color-border-subtle);
@@ -1242,7 +1253,7 @@ pre.prompt-negative {
   flex-basis: 100%;
   display: block;
   font-family: var(--font-sans);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.1em;

@@ -500,15 +500,19 @@ class SseReader(threading.Thread):
 
 # ---------------------------------------------------------------- measure: 画面
 
+# 仮想スクロールでは見える行の前後しか DOM に無いので、「全件がそろう」ではなく
+# 「描画が落ち着く」（タイル数・scrollTop・scrollHeight が stableMs のあいだ変わらず、
+#  タイルが min(20, 件数) 枚以上ある）を完了とする。
 WAIT_STABLE_JS = """async ([expected, stableMs, timeoutMs]) => {
   const g = document.querySelector('#grid');
   const t0 = performance.now();
+  const need = Math.min(20, expected);
   let last = null, since = performance.now();
   while (performance.now() - t0 < timeoutMs) {
     const n = g.querySelectorAll('.tile').length;
-    const st = n + '|' + Math.round(g.scrollTop);
+    const st = n + '|' + Math.round(g.scrollTop) + '|' + Math.round(g.scrollHeight);
     if (st !== last) { last = st; since = performance.now(); }
-    if (n === expected && performance.now() - since >= stableMs) return performance.now() - t0;
+    if (n >= need && performance.now() - since >= stableMs) return performance.now() - t0;
     await new Promise(r => setTimeout(r, 50));
   }
   return -1;
@@ -533,9 +537,9 @@ SELECTION_JS = """async () => {
   const fire = (el, mods) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...mods }));
   const res = [];
   fire(g, {}); await raf2(); res.push(read());
-  fire(T(70), {}); await raf2(); res.push(read());
-  fire(T(72), { ctrlKey: true }); await raf2(); res.push(read());
-  fire(T(80), { shiftKey: true }); await raf2(); res.push(read());
+  fire(T(12), {}); await raf2(); res.push(read());
+  fire(T(14), { ctrlKey: true }); await raf2(); res.push(read());
+  fire(T(22), { shiftKey: true }); await raf2(); res.push(read());
   fire(g, {}); await raf2(); res.push(read());
   return res;
 }"""
@@ -666,7 +670,7 @@ def measure_ui(base: str, shots_dir: Path, notes: list[str]) -> dict:
             # 1 クリックの処理（別々の 5 枚）
             try:
                 times = []
-                for idx in (10, 20, 30, 40, 50):
+                for idx in (6, 12, 18, 24, 30):  # 仮想スクロールでは先頭の窓が 40 枚ほどなので、その内側
                     v = page.evaluate(CLICK_TIME_JS, idx)
                     if v is not None:
                         times.append(float(v))
@@ -688,7 +692,7 @@ def measure_ui(base: str, shots_dir: Path, notes: list[str]) -> dict:
 
             # ライトボックス
             try:
-                out["ui_lightbox_ok"] = bool(page.evaluate(LIGHTBOX_JS, 90))
+                out["ui_lightbox_ok"] = bool(page.evaluate(LIGHTBOX_JS, 26))
                 page.keyboard.press("Escape")
                 page.wait_for_timeout(200)
             except Exception as e:

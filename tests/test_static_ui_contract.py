@@ -91,19 +91,93 @@ def test_update_selection_classes_uses_class_toggle() -> None:
     assert "is-selected" in body
 
 
-# (c) renderGrid は分割描画・タイルの使い回し・スクロール位置の保持を行う
-def test_render_grid_is_chunked_and_reuses_tiles() -> None:
+# (c) renderGrid は、全タイルを作らず、行の配置の計算と「見えている行だけの描画」を呼び、
+#     スクロール位置の保持（同じ表示なら保ち、替えたら先頭）を行う
+def test_render_grid_lays_out_rows_and_renders_only_a_window() -> None:
     body = _func_body(_read("app.js"), "renderGrid")
     for needle in (
-        "requestAnimationFrame(",
-        "replaceChildren(",
-        "renderGen",
+        "computeGridLayout(",
+        "renderGridWindow(",
         "scrollTop",
-        "tileKeyOf(",
         "lastViewKey",
         "currentViewKey(",
     ):
         assert needle in body, needle
+    # 全画像を回してタイルを作る処理は持たない（作るのは見えている行の前後だけ）
+    assert "makeTile(" not in body
+    assert "GRID_BATCH" not in body
+
+
+# ---------------------------------------------------------------------------
+# 作業定義（画面の全操作に 1〜2 秒のラグがある件：仮想スクロール）
+# - 目的：約 1.36 万枚のタイル（9.5 万要素）を常に DOM に置く作りが、クリック・スクロール・
+#   マウス移動のすべてを遅くしている（実測：タイル 200 枚ならクリック 28 ms・1 フレーム 16.7 ms、
+#   1.36 万枚ならクリック 200〜390 ms・1 フレーム 350 ms）。見えている行の前後だけタイルを作る。
+# - 完了条件：下の全件が通る。実装前は失敗する（赤）。実機の目標は、クリック 100 ms 以下、
+#   スクロールの 1 フレームの p95 が 50 ms 以下、既存の操作（選択・範囲選択・拡大・D&D・
+#   スクロール位置の保持）が変わらないこと。
+# - 検証方法：`.venv\Scripts\python.exe -m pytest tests/test_static_ui_contract.py -q` と、
+#   tools/bench_startup.py（本番の複製）の画面の測定。
+# ---------------------------------------------------------------------------
+
+# (p) 見えている行の前後だけを描く関数がある。上下の余白は spacer で表し、作ったタイルは使い回す
+def test_render_grid_window_builds_only_visible_rows_with_spacers() -> None:
+    js = _read("app.js")
+    body = _func_body(js, "renderGridWindow")
+    for needle in (
+        "makeTile(",
+        "tileKeyOf(",
+        "tileCache",
+        "makeSpacer(",
+        "replaceChildren(",
+        "style.height",
+    ):
+        assert needle in body, needle
+    # 余白の要素は makeSpacer が作り、class は CSS の .grid-spacer と一致する
+    assert "grid-spacer" in _func_body(js, "makeSpacer")
+
+
+# (q) 行の配置は、実際の列の数と幅（computed style の grid-template-columns）から計算する
+def test_compute_grid_layout_uses_actual_columns_and_aspect_ratio() -> None:
+    js = _read("app.js")
+    metrics = _func_body(js, "gridMetrics")
+    assert "gridTemplateColumns" in metrics
+    layout = _func_body(js, "computeGridLayout")
+    assert "gridMetrics(" in layout
+    assert "rowTops" in layout
+    # 画像の縦横比から高さを出す。極端比は [0.4, 2.5] にクランプ（makeTile の --img-aspect と同じ規則）
+    assert "tileHeightOf(" in layout
+    aspect = _func_body(js, "aspectOf")
+    assert "0.4" in aspect and "2.5" in aspect
+    assert "aspectOf(" in _func_body(js, "makeTile")
+
+
+# (r) スクロールで見える行が変わったら描き直す。受動のリスナーで、描き直しは 1 フレームに 1 回
+def test_grid_scroll_rerenders_window_in_animation_frame() -> None:
+    js = _read("app.js")
+    body = _func_body(js, "onGridScroll")
+    assert "requestAnimationFrame(" in body
+    assert "renderGridWindow(" in body
+    assert re.search(r'addEventListener\("scroll",\s*onGridScroll,\s*\{\s*passive:\s*true\s*\}\)', js)
+
+
+# (s) 幅の変化（ウィンドウ・右ペインの幅）とスライダーの操作で、行の配置を計算し直す（見ている位置を保つ）
+def test_grid_relayout_on_resize_and_slider() -> None:
+    js = _read("app.js")
+    assert "new ResizeObserver(" in js
+    body = _func_body(js, "relayoutGrid")
+    assert "computeGridLayout(" in body
+    assert "renderGridWindow(" in body
+    start = js.index("const applySize = (raw, { commit }) => {")
+    end = js.index("updateSliderFill();\n\n    slider.oninput", start)
+    assert "relayoutGrid(" in js[start:end]  # 連続操作中（commit=false）でも配置を直す
+
+
+# (t) spacer の規則：全列にまたがり、クリックを受けない
+def test_grid_spacer_rule() -> None:
+    block = _rule_block(_read("style.css"), ".grid-spacer")
+    assert re.search(r"grid-column:\s*1\s*/\s*-1", block)
+    assert "pointer-events: none" in block
 
 
 # (d) 背景クリックでの選択解除も、全タイルの作り直しをしない
@@ -225,6 +299,24 @@ def test_folder_rescanned_handles_auto_notice_quietly() -> None:
     assert "p.auto" in body
     assert "新着" in body
     assert "scheduleReloadImages(" in body
+
+
+# ---------------------------------------------------------------------------
+# 作業定義（右ペインのプロンプトの文字が大きく、幅に収まらない件）
+# - 目的：プロンプトのタグ行の文字を 2 段階小さくする（既存の段の最小 11px の下へ、12px → 10px）。
+# - 完了条件：下のテストが通り、実機の画像でタグが右ペインの幅に収まって見える。
+# - 検証方法：このファイルのテストと、自動ブラウザでの DOM の計算値と画像。
+# ---------------------------------------------------------------------------
+
+# (u) 新しい段 --font-size-2xs（10px）を足し、タグ行がそれを使う。DESIGN.md にも記す
+def test_prompt_token_row_font_is_two_steps_smaller() -> None:
+    css = _read("style.css")
+    assert re.search(r"--font-size-2xs:\s*10px", css)
+    block = _rule_block(css, ".prompt-token-row")
+    assert "var(--font-size-2xs)" in block
+    assert "--font-size-sm" not in block
+    design = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    assert "--font-size-2xs" in design
 
 
 # (o) ボタンは新着の確認。長い待ちを思わせる文言を持たず、Shift+クリックの案内を保つ

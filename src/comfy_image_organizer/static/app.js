@@ -560,16 +560,25 @@ if ("serviceWorker" in navigator) {
     renderRightPane();
   }
 
-  // ---- 一覧の描画の状態 (タイルの使い回しと分割描画) ----
-  // 画像の ID → { key, el }。取り直し・選択の変更のたびに約 1 万枚のタイルを
-  // 作り直さないよう、作ったタイルを使い回す。
+  // ---- 一覧の描画の状態 (仮想スクロール: 見えている行の前後だけタイルを作る) ----
+  // 1 万枚超のタイルを全部 DOM に置くと、クリック・スクロール・マウス移動のすべてが
+  // 1 秒前後かかる (実測: 1.36 万枚でクリック 200〜390 ms・1 フレーム 350 ms、
+  // 200 枚ならクリック 28 ms・1 フレーム 17 ms)。そこで、各行の高さを画像の縦横比から
+  // 計算し、見えている行の前後だけを DOM に置く。上下の余白は spacer で表す。
+  // 画像の ID → { key, el, h }。作ったタイルは使い回す (上限 TILE_CACHE_MAX 枚)。
   const tileCache = new Map();
   let tileCacheKey = "";      // 縮小画像の幅 (reqW) の文字列。変わったらタイルを作り直す
   let appliedSel = new Set(); // is-selected を付けてあるタイルの画像 ID
-  let renderGen = 0;          // 描画の世代。途中で次の描画が来たら、古い追加を止める
   let lastViewKey = "";       // 直近の表示 (フォルダ・フィルタ・検索語)
-  let pendingKeep = null;     // 分割描画の途中でまだ復元できていないスクロール位置
-  const GRID_BATCH = 400;     // 1 回に新しく作るタイルの数
+  const TILE_CACHE_MAX = 800; // 作ったタイルを覚えておく上限 (離れたタイルから捨てる)
+  const GRID_GAP = 2;         // CSS の .grid の gap と同じ
+  // 行の配置。cols: 列の数、colW: 1 列の幅 (px)、rowTops[r]: 行 r の上端 (内容の先頭から)、
+  // rowHeights[r]: 行 r の高さ、from/to: 今 DOM に置いている行の範囲 [from, to)
+  const gridLayout = {
+    cols: 1, colW: 0, padTop: 0, rows: 0,
+    rowTops: new Float64Array(1), rowHeights: new Float64Array(0),
+    from: -1, to: -1, reqW: 0, scrollQueued: false, width: 0,
+  };
 
   // 表示の鍵。reloadImages が /api/images へ渡す問い合わせのうち、並び順以外と同じ要素。
   // 同じ鍵の取り直し (新着・並び順の変更) はスクロール位置を保ち、変わったら先頭に戻す。
@@ -589,6 +598,187 @@ if ("serviceWorker" in navigator) {
     return `${img.id}:${img.sha1}:${img.filename}`;
   }
 
+  // 画像の縦横比。極端比は [0.4, 2.5] にクランプする (タイルの --img-aspect と行の高さの計算が同じ規則)。
+  function aspectOf(img) {
+    if (!(img.width > 0 && img.height > 0)) return 1;
+    return Math.max(0.4, Math.min(2.5, img.width / img.height));
+  }
+
+  // タイル 1 枚の高さ (px)。サムネの縦横比で決まる高さ + 上下の枠 (1px ずつ)。
+  function tileHeightOf(img) {
+    return (gridLayout.colW - 2) / aspectOf(img) + 2;
+  }
+
+  // 1 列の幅と列の数。実際に描かれている列 (computed style の grid-template-columns) を読み、
+  // 取れないとき (非表示など) だけ CSS の規則 (auto-fill, minmax(--thumb-size, 1fr)) から計算する。
+  function gridMetrics() {
+    const g = $("#grid");
+    const cs = getComputedStyle(g);
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const tracks = (cs.gridTemplateColumns || "")
+      .split(/\s+/)
+      .map(parseFloat)
+      .filter((x) => x > 0);
+    if (tracks.length > 0) return { cols: tracks.length, colW: tracks[0], padTop };
+    const inner = g.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    const min = Math.max(1, state.thumbW);
+    const cols = Math.max(1, Math.floor((inner + GRID_GAP) / (min + GRID_GAP)));
+    return { cols, colW: Math.max(1, (inner - GRID_GAP * (cols - 1)) / cols), padTop };
+  }
+
+  // 行の配置を計算する (state.images の並びと、列の数・幅から)。DOM には触らない。
+  // 行の高さ = その行のタイルの高さの最大 (CSS の grid-auto-rows: max-content と同じ)。
+  function computeGridLayout() {
+    const L = gridLayout;
+    const m = gridMetrics();
+    L.cols = m.cols;
+    L.colW = m.colW;
+    L.padTop = m.padTop;
+    const imgs = state.images;
+    L.rows = Math.ceil(imgs.length / L.cols);
+    L.rowTops = new Float64Array(L.rows + 1);
+    L.rowHeights = new Float64Array(L.rows);
+    let top = 0;
+    for (let r = 0; r < L.rows; r++) {
+      let h = 0;
+      const end = Math.min(imgs.length, (r + 1) * L.cols);
+      for (let i = r * L.cols; i < end; i++) {
+        const th = tileHeightOf(imgs[i]);
+        if (th > h) h = th;
+      }
+      L.rowHeights[r] = h;
+      L.rowTops[r] = top;
+      top += h + GRID_GAP;
+    }
+    L.rowTops[L.rows] = top;
+    L.from = -1; // 配置が変わったので、次の描画で置き直す
+    L.to = -1;
+  }
+
+  // 内容の先頭から y (px) の位置を含む行の番号 (二分探索)
+  function rowAt(y) {
+    const L = gridLayout;
+    let lo = 0;
+    let hi = L.rows - 1;
+    if (hi < 0) return 0;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (L.rowTops[mid] <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function makeSpacer(height) {
+    const d = document.createElement("div");
+    d.className = "grid-spacer";
+    d.style.height = `${Math.max(0, height)}px`;
+    return d;
+  }
+
+  // 見えている行の前後 1 画面ぶんだけタイルを DOM に置く (上下の余白は spacer)。
+  // atTop: 描く基準のスクロール位置 (省略時は今の scrollTop)。force: 範囲が足りていても置き直す。
+  function renderGridWindow(force, atTop) {
+    const g = $("#grid");
+    const L = gridLayout;
+    if (L.rows === 0) {
+      if (force || L.from !== 0) g.replaceChildren();
+      L.from = 0;
+      L.to = 0;
+      return;
+    }
+    const viewH = g.clientHeight || 800;
+    const st = atTop != null ? atTop : g.scrollTop;
+    const y0 = Math.max(0, st - L.padTop);
+    const firstVis = rowAt(y0);
+    const lastVis = rowAt(y0 + viewH);
+    // 今の範囲が、見えている行とその外側の 1 行を含んでいれば、置き直さない
+    if (!force && L.from >= 0 && Math.max(0, firstVis - 1) >= L.from && Math.min(L.rows, lastVis + 2) <= L.to) return;
+
+    const span = Math.max(2, lastVis - firstVis + 1);
+    const from = Math.max(0, firstVis - span);
+    const to = Math.min(L.rows, lastVis + 1 + span);
+    L.from = from;
+    L.to = to;
+
+    const imgs = state.images;
+    const nodes = [];
+    if (from > 0) nodes.push(makeSpacer(L.rowTops[from] - GRID_GAP));
+    const end = Math.min(imgs.length, to * L.cols);
+    for (let i = from * L.cols; i < end; i++) {
+      const img = imgs[i];
+      const key = tileKeyOf(img);
+      let ent = tileCache.get(img.id);
+      if (!ent || ent.key !== key) {
+        // 新規、または版 (sha1)・ファイル名が変わった画像は、タイルを作り直す
+        appliedSel.delete(img.id);
+        ent = { key, el: makeTile(img, L.reqW), h: -1 };
+      } else {
+        tileCache.delete(img.id); // 使った順に並べ直す (捨てるのは古いものから)
+      }
+      tileCache.set(img.id, ent);
+      const h = tileHeightOf(img);
+      if (ent.h !== h) {
+        ent.el.style.height = `${h}px`;
+        ent.h = h;
+      }
+      nodes.push(ent.el);
+    }
+    if (to < L.rows) nodes.push(makeSpacer(L.rowTops[L.rows] - GRID_GAP - L.rowTops[to]));
+    g.replaceChildren(...nodes);
+
+    // 作ったタイルの覚えすぎを防ぐ (今置いたタイルは最後尾にあるので捨てない)
+    const limit = Math.max(TILE_CACHE_MAX, nodes.length * 2);
+    if (tileCache.size > limit) {
+      for (const id of tileCache.keys()) {
+        if (tileCache.size <= limit) break;
+        tileCache.delete(id);
+        appliedSel.delete(id);
+      }
+    }
+  }
+
+  // スクロールで見える行が変わったら、1 フレームに 1 回だけ置き直す
+  function onGridScroll() {
+    if (gridLayout.scrollQueued) return;
+    gridLayout.scrollQueued = true;
+    requestAnimationFrame(() => {
+      gridLayout.scrollQueued = false;
+      renderGridWindow(false);
+    });
+  }
+
+  // 幅の変化 (ウィンドウ・右ペインの幅) やスライダーの操作で、行の配置を計算し直す。
+  // 見ている位置 (先頭に見えている画像の行) を保つ。幅が同じ (高さだけ変わった) ときは置き直しだけ。
+  function relayoutGrid(force) {
+    const g = $("#grid");
+    const L = gridLayout;
+    const width = g.clientWidth;
+    if (!width) return; // 非表示のあいだは何もしない
+    if (!force && width === L.width) {
+      renderGridWindow(false);
+      return;
+    }
+    L.width = width;
+    // 先頭の余白の中（一番上）にいたなら、そのまま一番上に置く（先頭の行を余白ごと見せる）
+    const atTop = g.scrollTop <= L.padTop;
+    const anchorIdx = L.rows
+      ? rowAt(Math.max(0, g.scrollTop - L.padTop)) * L.cols
+      : 0;
+    computeGridLayout();
+    const row = L.rows ? Math.min(L.rows - 1, Math.floor(anchorIdx / L.cols)) : 0;
+    const y = L.rows && !atTop ? L.padTop + L.rowTops[row] : 0;
+    renderGridWindow(true, y);
+    g.scrollTop = y;
+    renderGridWindow(false);
+  }
+
+  function setupGridVirtualScroll() {
+    const g = $("#grid");
+    g.addEventListener("scroll", onGridScroll, { passive: true });
+    new ResizeObserver(() => relayoutGrid(false)).observe(g);
+  }
+
   function renderGrid() {
     const g = $("#grid");
     const w = state.thumbW;
@@ -604,75 +794,20 @@ if ("serviceWorker" in navigator) {
       appliedSel.clear();
       tileCacheKey = String(reqW);
     }
-    // 取り直しで消えた画像と、版 (sha1)・ファイル名が変わった画像のタイルを外す
-    const keyById = new Map();
-    for (const img of state.images) keyById.set(img.id, tileKeyOf(img));
-    for (const [id, ent] of tileCache) {
-      if (keyById.get(id) !== ent.key) {
-        tileCache.delete(id);
-        appliedSel.delete(id);
-      }
-    }
+    gridLayout.reqW = reqW;
 
     // 同じ表示の取り直しならスクロール位置を保ち、フォルダ・フィルタ・検索語を
-    // 替えたときは先頭に戻す。分割描画の途中で次の取り直しが来たときは、
-    // まだ復元できていない前の位置 (pendingKeep) を引き継ぐ。
-    const gen = ++renderGen;
+    // 替えたときは先頭に戻す。
     const viewKey = currentViewKey();
-    const keep = viewKey === lastViewKey
-      ? (pendingKeep != null ? pendingKeep : g.scrollTop)
-      : 0;
+    const keep = viewKey === lastViewKey ? g.scrollTop : 0;
     lastViewKey = viewKey;
 
-    const imgs = state.images;
-    let idx = 0;
-    // 新しく作るタイルが GRID_BATCH 枚になるまで (使い回すタイルは数えない) まとめて返す
-    const takeBatch = () => {
-      const frag = document.createDocumentFragment();
-      let made = 0;
-      while (idx < imgs.length && made < GRID_BATCH) {
-        const img = imgs[idx++];
-        let ent = tileCache.get(img.id);
-        if (!ent) {
-          ent = { key: keyById.get(img.id), el: makeTile(img, reqW) };
-          tileCache.set(img.id, ent);
-          made++;
-        }
-        frag.appendChild(ent.el);
-      }
-      return frag;
-    };
-
-    // スクロール位置の復元は、復元できる高さになった最初の時点で 1 回だけ行う
-    // (復元の後は引き戻さない。追加の途中で利用者がスクロールしても邪魔をしない)。
-    let restored = false;
-    const tryRestore = () => {
-      if (restored) return;
-      if (g.scrollHeight - g.clientHeight >= keep) {
-        g.scrollTop = keep;
-        restored = true;
-        pendingKeep = null;
-      }
-    };
-
-    g.replaceChildren(takeBatch());
-    if (keep === 0) {
-      g.scrollTop = 0;
-      restored = true;
-      pendingKeep = null;
-    } else {
-      pendingKeep = keep;
-      tryRestore();
-    }
-
-    // 残りは次のフレームから続けて追加する (最初の画面を先に出す)
-    const step = () => {
-      if (gen !== renderGen) return;
-      g.appendChild(takeBatch());
-      tryRestore();
-      if (idx < imgs.length) requestAnimationFrame(step);
-    };
-    if (idx < imgs.length) requestAnimationFrame(step);
+    // 行の配置を先に計算するので、全体の高さは最初から決まっていて、位置をすぐ復元できる
+    computeGridLayout();
+    gridLayout.width = g.clientWidth;
+    renderGridWindow(true, keep);
+    g.scrollTop = keep;
+    renderGridWindow(false);
 
     updateSelectionClasses();
     updateSummary();
@@ -690,11 +825,10 @@ if ("serviceWorker" in navigator) {
     const thumb = document.createElement("div");
     thumb.className = "tile__thumb";
     // 各タイルを画像の自然アスペクト比に合わせる (1:1 固定をやめて、
-    // 横長画像の上下レターボックスをなくす)。極端比は念のため [0.4, 2.5] にクランプ。
+    // 横長画像の上下レターボックスをなくす)。極端比は [0.4, 2.5] にクランプ (aspectOf)。
+    // 行の高さの計算 (computeGridLayout) と同じ値を使う。
     if (img.width > 0 && img.height > 0) {
-      const a = img.width / img.height;
-      const clamped = Math.max(0.4, Math.min(2.5, a));
-      thumb.style.setProperty("--img-aspect", String(clamped));
+      thumb.style.setProperty("--img-aspect", String(aspectOf(img)));
     }
 
     const i = document.createElement("img");
@@ -2187,6 +2321,7 @@ if ("serviceWorker" in navigator) {
       // フォーカス中の number input は触らない (タイプ中の値を奪わない)
       if (document.activeElement !== numInput) numInput.value = v;
       $("#grid").style.setProperty("--thumb-size", `${v}px`);
+      relayoutGrid(true); // 列の数・幅が変わるので、連続操作中も行の配置を計算し直す
       updateSliderFill();
       if (commit) {
         renderGrid();
@@ -2449,6 +2584,7 @@ if ("serviceWorker" in navigator) {
     setupLightbox();
     setupHelpBanner();
     setupGridBackgroundClick();
+    setupGridVirtualScroll();
   }
 
   async function init() {

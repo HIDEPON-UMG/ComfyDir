@@ -72,6 +72,10 @@ typography:
     fontFamily: "JetBrains Mono, 'SF Mono', 'Cascadia Code', 'Hiragino Kaku Gothic ProN', monospace"
     fontSize: 0.75rem
     lineHeight: 1.5
+  code-2xs:
+    fontFamily: "JetBrains Mono, 'SF Mono', 'Cascadia Code', 'Hiragino Kaku Gothic ProN', monospace"
+    fontSize: 0.625rem   # 10px (--font-size-2xs)。右ペインのプロンプトのタグ行（幅に収めるため最小の段の下）
+    lineHeight: 1.9
 
 rounded:
   sm:   4px
